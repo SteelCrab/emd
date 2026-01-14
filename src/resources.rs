@@ -3,7 +3,9 @@ use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_rds::Client as RdsClient;
 use aws_sdk_s3::Client as S3Client;
 
-pub async fn show_resources(region: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+use crate::error::{AppError, Result};
+
+pub async fn show_resources(region: Option<String>) -> Result<()> {
     let config = if let Some(region) = &region {
         aws_config::defaults(BehaviorVersion::latest())
             .region(aws_config::Region::new(region.clone()))
@@ -41,12 +43,14 @@ pub async fn show_resources(region: Option<String>) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-async fn show_ec2_instances(
-    config: &aws_config::SdkConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn show_ec2_instances(config: &aws_config::SdkConfig) -> Result<()> {
     let client = Ec2Client::new(config);
 
-    let resp = client.describe_instances().send().await?;
+    let resp = client
+        .describe_instances()
+        .send()
+        .await
+        .map_err(|e| AppError::AwsError(e.to_string()))?;
 
     let mut instances: Vec<(String, String, String, String)> = Vec::new();
 
@@ -110,10 +114,14 @@ async fn show_ec2_instances(
     Ok(())
 }
 
-async fn show_s3_buckets(config: &aws_config::SdkConfig) -> Result<(), Box<dyn std::error::Error>> {
+async fn show_s3_buckets(config: &aws_config::SdkConfig) -> Result<()> {
     let client = S3Client::new(config);
 
-    let resp = client.list_buckets().send().await?;
+    let resp = client
+        .list_buckets()
+        .send()
+        .await
+        .map_err(|e| AppError::AwsError(e.to_string()))?;
     let buckets: Vec<_> = resp.buckets().iter().collect();
 
     println!("╠══════════════════════════════════════════════════════════════════╣");
@@ -160,13 +168,15 @@ fn truncate(s: &str, max_len: usize) -> String {
     }
 }
 
-async fn show_rds_clusters(
-    config: &aws_config::SdkConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn show_rds_clusters(config: &aws_config::SdkConfig) -> Result<()> {
     let client = RdsClient::new(config);
 
     // Get DB Instances
-    let resp = client.describe_db_instances().send().await?;
+    let resp = client
+        .describe_db_instances()
+        .send()
+        .await
+        .map_err(|e| AppError::AwsError(e.to_string()))?;
     let instances: Vec<_> = resp.db_instances().iter().collect();
 
     println!("╠══════════════════════════════════════════════════════════════════╣");

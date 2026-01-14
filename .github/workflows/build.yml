@@ -34,7 +34,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact: t-aws-windows-x86_64.exe
           - name: Windows-arm64
-            os: windows-latest
+            os: windows-arm64
             target: aarch64-pc-windows-msvc
             artifact: t-aws-windows-arm64.exe
           

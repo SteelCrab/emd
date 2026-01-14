@@ -34,8 +34,8 @@ pub async fn show_resources(region: Option<String>) -> Result<()> {
     // S3 Buckets
     show_s3_buckets(&config).await?;
 
-    // RDS Clusters
-    show_rds_clusters(&config).await?;
+    // RDS Instances
+    show_rds_instances(&config).await?;
 
     println!("╚══════════════════════════════════════════════════════════════════╝");
     println!();
@@ -168,7 +168,7 @@ fn truncate(s: &str, max_len: usize) -> String {
     }
 }
 
-async fn show_rds_clusters(config: &aws_config::SdkConfig) -> Result<()> {
+async fn show_rds_instances(config: &aws_config::SdkConfig) -> Result<()> {
     let client = RdsClient::new(config);
 
     // Get DB Instances

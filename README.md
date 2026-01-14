@@ -1,3 +1,5 @@
+[🇺🇸 English](README.md) | [🇰🇷 한국어](README.ko.md)
+
 # AWS CLI Installer TUI
 
 A cross-platform terminal UI installer for AWS CLI v2, built with Rust.

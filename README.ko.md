@@ -1,3 +1,5 @@
+[🇺🇸 English](README.md) | [🇰🇷 한국어](README.ko.md)
+
 # AWS CLI 설치 도구 (TUI)
 
 Rust로 만든 크로스 플랫폼 AWS CLI v2 터미널 설치 도구입니다.

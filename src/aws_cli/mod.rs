@@ -1,6 +1,7 @@
 mod common;
 mod ec2;
 mod ecr;
+mod iam;
 mod load_balancer;
 mod security_group;
 mod vpc;
@@ -35,3 +36,7 @@ pub use load_balancer::{
 
 // Re-export ECR types and functions
 pub use ecr::{EcrDetail, get_ecr_detail, list_ecr_repositories};
+
+// Re-export IAM types and functions
+#[allow(unused_imports)]
+pub use iam::{IamRoleDetail, get_iam_role_detail, list_iam_roles};

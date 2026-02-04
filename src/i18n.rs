@@ -471,6 +471,34 @@ impl I18n {
         }
     }
 
+    pub fn no_iam_roles(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "IAM 역할이 없습니다.",
+            Language::English => "No IAM roles found.",
+        }
+    }
+
+    pub fn refreshing_iam_list(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "IAM 역할 목록 새로고침 중",
+            Language::English => "Refreshing IAM roles list",
+        }
+    }
+
+    pub fn loading_iam_list(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "IAM 역할 목록 조회 중",
+            Language::English => "Loading IAM roles",
+        }
+    }
+
+    pub fn loading_iam_detail(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "IAM 역할 상세 정보 조회 중",
+            Language::English => "Loading IAM role details",
+        }
+    }
+
     // VPC Loading steps
     pub fn vpc_basic_info(&self) -> &'static str {
         match self.lang {

@@ -17,6 +17,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         Screen::SecurityGroupSelect => handle_security_group_select(app, key),
         Screen::LoadBalancerSelect => handle_load_balancer_select(app, key),
         Screen::EcrSelect => handle_ecr_select(app, key),
+        Screen::IamSelect => handle_iam_select(app, key),
         Screen::Preview => handle_preview(app, key),
         Screen::Settings => handle_settings(app, key),
     }
@@ -207,6 +208,26 @@ pub fn process_loading(app: &mut App) {
             }
             finish_loading(app);
         }
+        LoadingTask::RefreshIam => {
+            app.iam_roles = aws_cli::list_iam_roles();
+            app.message = app.i18n.refresh_complete().to_string();
+            finish_loading(app);
+        }
+        LoadingTask::LoadIam => {
+            app.iam_roles = aws_cli::list_iam_roles();
+            app.selected_index = 0;
+            app.screen = Screen::IamSelect;
+            finish_loading(app);
+        }
+        LoadingTask::LoadIamDetail(name) => {
+            if let Some(detail) = aws_cli::get_iam_role_detail(&name) {
+                app.preview_content = detail.to_markdown();
+                app.preview_filename = format!("{}.md", detail.name);
+                app.iam_detail = Some(detail);
+                app.screen = Screen::Preview;
+            }
+            finish_loading(app);
+        }
         LoadingTask::LoadBlueprintResources(current_index) => {
             process_blueprint_resources(app, current_index);
         }
@@ -299,6 +320,9 @@ fn process_blueprint_resources(app: &mut App, current_index: usize) {
         ResourceType::Ecr => aws_cli::get_ecr_detail(&resource.resource_id)
             .map(|d| d.to_markdown())
             .unwrap_or_else(|| format!("## ECR: {} (조회 실패)\n", resource.resource_name)),
+        ResourceType::Iam => aws_cli::get_iam_role_detail(&resource.resource_id)
+            .map(|d| d.to_markdown())
+            .unwrap_or_else(|| format!("## IAM: {} (조회 실패)\n", resource.resource_name)),
     };
 
     app.blueprint_markdown_parts.push(markdown);
@@ -670,7 +694,8 @@ fn handle_service_select(app: &mut App, key: KeyEvent) {
             2 => start_loading(app, LoadingTask::LoadSecurityGroup),
             3 => start_loading(app, LoadingTask::LoadLoadBalancer),
             4 => start_loading(app, LoadingTask::LoadEcr),
-            5 => {
+            5 => start_loading(app, LoadingTask::LoadIam),
+            6 => {
                 // Exit
                 if app.blueprint_mode {
                     app.screen = Screen::BlueprintDetail;
@@ -827,6 +852,33 @@ fn handle_ecr_select(app: &mut App, key: KeyEvent) {
     }
 }
 
+fn handle_iam_select(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.selected_index > 0 {
+                app.selected_index -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.selected_index < app.iam_roles.len().saturating_sub(1) {
+                app.selected_index += 1;
+            }
+        }
+        KeyCode::Enter => {
+            if app.selected_index < app.iam_roles.len() {
+                let name = app.iam_roles[app.selected_index].id.clone();
+                start_loading(app, LoadingTask::LoadIamDetail(name));
+            }
+        }
+        KeyCode::Char('r') => {
+            start_loading(app, LoadingTask::RefreshIam);
+        }
+        KeyCode::Esc => app.screen = Screen::ServiceSelect,
+        KeyCode::Char('q') => app.running = false,
+        _ => {}
+    }
+}
+
 fn handle_preview(app: &mut App, key: KeyEvent) {
     let content_lines = app.preview_content.lines().count() as u16;
 
@@ -884,6 +936,7 @@ fn handle_preview(app: &mut App, key: KeyEvent) {
                 app.sg_detail = None;
                 app.lb_detail = None;
                 app.ecr_detail = None;
+                app.iam_detail = None;
                 app.preview_scroll = 0;
                 app.screen = Screen::BlueprintDetail;
             }
@@ -897,6 +950,7 @@ fn handle_preview(app: &mut App, key: KeyEvent) {
                 app.sg_detail = None;
                 app.lb_detail = None;
                 app.ecr_detail = None;
+                app.iam_detail = None;
                 app.screen = Screen::BlueprintDetail;
             } else if app.ec2_detail.is_some() {
                 app.ec2_detail = None;
@@ -913,6 +967,9 @@ fn handle_preview(app: &mut App, key: KeyEvent) {
             } else if app.ecr_detail.is_some() {
                 app.ecr_detail = None;
                 app.screen = Screen::EcrSelect;
+            } else if app.iam_detail.is_some() {
+                app.iam_detail = None;
+                app.screen = Screen::IamSelect;
             } else {
                 app.screen = Screen::ServiceSelect;
             }

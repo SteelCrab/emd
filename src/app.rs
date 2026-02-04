@@ -1,4 +1,4 @@
-use crate::aws_cli::{self, AwsResource, Ec2Detail, EcrDetail};
+use crate::aws_cli::{self, AwsResource, Ec2Detail, EcrDetail, IamRoleDetail};
 use crate::blueprint::{
     Blueprint, BlueprintResource, BlueprintStore, ResourceType, load_blueprints, save_blueprints,
 };
@@ -19,6 +19,7 @@ pub enum Screen {
     SecurityGroupSelect,
     LoadBalancerSelect,
     EcrSelect,
+    IamSelect,
     Preview,
     Settings,
 }
@@ -32,16 +33,19 @@ pub enum LoadingTask {
     RefreshSecurityGroup,
     RefreshLoadBalancer,
     RefreshEcr,
+    RefreshIam,
     LoadEc2,
     LoadVpc,
     LoadSecurityGroup,
     LoadLoadBalancer,
     LoadEcr,
+    LoadIam,
     LoadEc2Detail(String),
     LoadVpcDetail(String, u8), // (vpc_id, step: 0-6)
     LoadSecurityGroupDetail(String),
     LoadLoadBalancerDetail(String),
     LoadEcrDetail(String),
+    LoadIamDetail(String),
     LoadBlueprintResources(usize), // (current_resource_index)
 }
 
@@ -141,7 +145,7 @@ pub const REGIONS: &[Region] = &[
 ];
 
 // Service names (excluding exit which is handled separately)
-pub const SERVICE_KEYS: &[&str] = &["EC2", "Network", "Security Group", "Load Balancer", "ECR"];
+pub const SERVICE_KEYS: &[&str] = &["EC2", "Network", "Security Group", "Load Balancer", "ECR", "IAM"];
 
 pub struct App {
     pub screen: Screen,
@@ -168,6 +172,7 @@ pub struct App {
     pub security_groups: Vec<AwsResource>,
     pub load_balancers: Vec<AwsResource>,
     pub ecr_repositories: Vec<AwsResource>,
+    pub iam_roles: Vec<AwsResource>,
 
     // Selected EC2 Detail
     pub ec2_detail: Option<Ec2Detail>,
@@ -179,6 +184,8 @@ pub struct App {
     pub lb_detail: Option<aws_cli::LoadBalancerDetail>,
     // Selected ECR Detail
     pub ecr_detail: Option<EcrDetail>,
+    // Selected IAM Role Detail
+    pub iam_detail: Option<IamRoleDetail>,
 
     // Preview
     pub preview_content: String,
@@ -224,11 +231,13 @@ impl App {
             security_groups: Vec::new(),
             load_balancers: Vec::new(),
             ecr_repositories: Vec::new(),
+            iam_roles: Vec::new(),
             ec2_detail: None,
             network_detail: None,
             sg_detail: None,
             lb_detail: None,
             ecr_detail: None,
+            iam_detail: None,
 
             preview_content: String::new(),
             preview_filename: String::new(),
@@ -389,6 +398,8 @@ impl App {
             Some(ResourceType::LoadBalancer)
         } else if self.ecr_detail.is_some() {
             Some(ResourceType::Ecr)
+        } else if self.iam_detail.is_some() {
+            Some(ResourceType::Iam)
         } else {
             None
         }
@@ -403,8 +414,10 @@ impl App {
             Some((detail.id.clone(), detail.name.clone()))
         } else if let Some(ref detail) = self.lb_detail {
             Some((detail.arn.clone(), detail.name.clone()))
+        } else if let Some(ref detail) = self.ecr_detail {
+            Some((detail.name.clone(), detail.name.clone()))
         } else {
-            self.ecr_detail
+            self.iam_detail
                 .as_ref()
                 .map(|detail| (detail.name.clone(), detail.name.clone()))
         }

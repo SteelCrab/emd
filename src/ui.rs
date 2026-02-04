@@ -129,7 +129,8 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         | Screen::VpcSelect
         | Screen::SecurityGroupSelect
         | Screen::LoadBalancerSelect
-        | Screen::EcrSelect => format!(
+        | Screen::EcrSelect
+        | Screen::IamSelect => format!(
             "↑↓/jk: {} | Enter: {} | r: {} | Esc: {} | q: {}",
             i.move_cursor(),
             i.select(),
@@ -201,6 +202,7 @@ fn draw_main(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Preview => draw_preview(frame, app, area),
         Screen::LoadBalancerSelect => draw_load_balancer_select(frame, app, area),
         Screen::EcrSelect => draw_ecr_select(frame, app, area),
+        Screen::IamSelect => draw_iam_select(frame, app, area),
         Screen::Settings => draw_settings(frame, app, area),
     }
 }
@@ -238,6 +240,9 @@ fn draw_loading(frame: &mut Frame, app: &App, area: Rect) {
         LoadingTask::RefreshEcr => i.refreshing_ecr_list(),
         LoadingTask::LoadEcr => i.loading_ecr_list(),
         LoadingTask::LoadEcrDetail(_) => i.loading_ecr_detail(),
+        LoadingTask::RefreshIam => i.refreshing_iam_list(),
+        LoadingTask::LoadIam => i.loading_iam_list(),
+        LoadingTask::LoadIamDetail(_) => i.loading_iam_detail(),
         LoadingTask::LoadBlueprintResources(_) => i.loading_blueprint_resources(),
     };
 
@@ -718,6 +723,52 @@ fn draw_ecr_select(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(list, area);
 }
 
+fn draw_iam_select(frame: &mut Frame, app: &App, area: Rect) {
+    let title = " IAM Roles ";
+
+    if app.iam_roles.is_empty() {
+        let para = Paragraph::new(app.i18n.no_iam_roles())
+            .block(Block::default().title(title).borders(Borders::ALL));
+        frame.render_widget(para, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .iam_roles
+        .iter()
+        .enumerate()
+        .map(|(i, role)| {
+            let is_in_blueprint = app.current_blueprint.as_ref().is_some_and(|bp| {
+                bp.resources
+                    .iter()
+                    .any(|r| r.resource_id == role.id && r.resource_type == ResourceType::Iam)
+            });
+
+            let style = if i == app.selected_index {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            let mut prefix = if i == app.selected_index {
+                "▶ ".to_string()
+            } else {
+                "  ".to_string()
+            };
+
+            if is_in_blueprint {
+                prefix = format!("{}✓ ", prefix);
+            }
+
+            ListItem::new(format!("{}{}", prefix, role.name)).style(style)
+        })
+        .collect();
+
+    let list = List::new(items).block(Block::default().title(title).borders(Borders::ALL));
+    frame.render_widget(list, area);
+}
+
 fn draw_blueprint_select(frame: &mut Frame, app: &App, area: Rect) {
     let i = &app.i18n;
     let title = format!(" {} ", i.blueprint());
@@ -829,6 +880,7 @@ fn draw_blueprint_detail(frame: &mut Frame, app: &App, area: Rect) {
                 ResourceType::SecurityGroup => Color::Magenta,
                 ResourceType::LoadBalancer => Color::Blue,
                 ResourceType::Ecr => Color::LightRed,
+                ResourceType::Iam => Color::Yellow,
             };
 
             ListItem::new(Line::from(vec![

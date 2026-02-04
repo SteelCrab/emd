@@ -19,6 +19,65 @@ pub fn get_region_args() -> Vec<String> {
     Vec::new()
 }
 
+// Async Runtime Helper
+use std::sync::OnceLock;
+use tokio::runtime::Runtime;
+
+static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+static SDK_CONFIG: OnceLock<tokio::sync::Mutex<Option<aws_config::SdkConfig>>> = OnceLock::new();
+
+pub fn get_runtime() -> &'static Runtime {
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create Tokio runtime")
+    })
+}
+
+pub fn get_sdk_config() -> aws_config::SdkConfig {
+    let runtime = get_runtime();
+
+    // Check if we already have a cached config
+    let has_config = if let Some(mutex) = SDK_CONFIG.get() {
+        if let Ok(guard) = runtime.block_on(async { mutex.try_lock() }) {
+            guard.is_some()
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if has_config {
+        let mutex = SDK_CONFIG.get().unwrap();
+        // This clone is cheap (SdkConfig is cheaply cloneable)
+        return runtime.block_on(async {
+            let guard = mutex.lock().await;
+            guard.as_ref().unwrap().clone()
+        });
+    }
+
+    // Load new config
+    let region = {
+        let r = REGION.lock().unwrap();
+        r.clone().map(aws_config::Region::new)
+    };
+
+    let config = runtime.block_on(async {
+        let loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
+        match region {
+            Some(r) => loader.region(r).load().await,
+            None => loader.load().await,
+        }
+    });
+
+    // Cache it (simplified for now, might need better cache invalidation if region changes often)
+    // For now, we just return the config directly as we don't have a good way to update the global static safely without async mutex complexity
+    // But since the region is global, we can perhaps just reload it every time for now or trust the AWS SDK to handle it efficiently
+    config
+}
+
 #[derive(Debug, Clone)]
 pub struct AwsResource {
     pub name: String,

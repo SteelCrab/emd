@@ -253,11 +253,29 @@ fn process_blueprint_resources(app: &mut App, current_index: usize) {
             .zip(app.blueprint_markdown_parts.iter())
             .enumerate()
         {
-            let anchor = format!(
-                "{}-{}",
-                res.resource_type.display().to_lowercase().replace(" ", "-"),
-                res.resource_name.to_lowercase().replace(" ", "-")
-            );
+            // 실제 ## 헤더에서 앵커 추출
+            let header_line = markdown
+                .lines()
+                .find(|line| line.starts_with("## "))
+                .unwrap_or("");
+            let header_text = header_line.trim_start_matches("## ").trim();
+
+            // GitHub 앵커 생성 규칙: 소문자, 공백->-, 특수문자(|, (, )) 제거
+            let anchor = header_text
+                .to_lowercase()
+                .chars()
+                .map(|c| match c {
+                    ' ' => '-',
+                    '(' | ')' | '|' => '-',
+                    c if c.is_alphanumeric() || c == '-' || c == '_' => c,
+                    _ => '-',
+                })
+                .collect::<String>()
+                .split('-')
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("-");
+
             toc.push(format!(
                 "- [{}. {} - {}](#{})",
                 i + 1,
@@ -272,9 +290,18 @@ fn process_blueprint_resources(app: &mut App, current_index: usize) {
                     let header = line.trim_start_matches("### ").trim();
                     let sub_anchor = header
                         .to_lowercase()
-                        .replace(" ", "-")
-                        .replace("(", "")
-                        .replace(")", "");
+                        .chars()
+                        .map(|c| match c {
+                            ' ' => '-',
+                            '(' | ')' | '|' => '-',
+                            c if c.is_alphanumeric() || c == '-' || c == '_' => c,
+                            _ => '-',
+                        })
+                        .collect::<String>()
+                        .split('-')
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("-");
                     toc.push(format!("  - [{}](#{})", header, sub_anchor));
                 }
             }

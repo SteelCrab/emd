@@ -1,6 +1,5 @@
 use crate::aws_cli::common::{
-    AwsResource, Tag, extract_json_value, extract_tags, parse_name_tag, parse_resources_from_json,
-    run_aws_cli,
+    AwsResource, Tag, extract_json_value, extract_tags, parse_name_tag, run_aws_cli,
 };
 use crate::aws_cli::ec2::get_subnet_name;
 use serde::Deserialize;
@@ -456,19 +455,56 @@ impl NetworkDetail {
 
 // Public functions
 pub fn list_vpcs() -> Vec<AwsResource> {
-    let output = match run_aws_cli(&[
-        "ec2",
-        "describe-vpcs",
-        "--query",
-        "Vpcs[*].[VpcId,Tags]",
-        "--output",
-        "json",
-    ]) {
+    let output = match run_aws_cli(&["ec2", "describe-vpcs", "--output", "json"]) {
         Some(o) => o,
         None => return Vec::new(),
     };
 
-    parse_resources_from_json(&output, "vpc-")
+    parse_vpcs(&output)
+}
+
+fn parse_vpcs(json: &str) -> Vec<AwsResource> {
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct VpcsResponse {
+        vpcs: Vec<VpcInfo>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct VpcInfo {
+        vpc_id: String,
+        cidr_block: String,
+        state: String,
+        #[serde(default)]
+        tags: Vec<Tag>,
+    }
+
+    let response: VpcsResponse = match serde_json::from_str(json) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+
+    response
+        .vpcs
+        .into_iter()
+        .map(|vpc| {
+            let name = vpc
+                .tags
+                .iter()
+                .find(|t| t.key == "Name")
+                .map(|t| t.value.clone())
+                .unwrap_or_default();
+
+            AwsResource {
+                name: format!("{} || {} || {}", name, vpc.vpc_id, vpc.cidr_block),
+                id: vpc.vpc_id,
+                state: vpc.state,
+                az: String::new(),
+                cidr: vpc.cidr_block,
+            }
+        })
+        .collect()
 }
 
 pub fn list_subnets(vpc_id: &str) -> Vec<AwsResource> {

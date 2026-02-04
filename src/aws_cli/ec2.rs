@@ -189,7 +189,7 @@ fn parse_instance_resources(json: &str) -> Vec<AwsResource> {
                 };
 
                 resources.push(AwsResource {
-                    name: format!("{} - {} - {}", display_name, id, state),
+                    name: format!("{} || {} || {}", display_name, id, state),
                     id: id.to_string(),
                     state: state.clone(),
                     az: String::new(),

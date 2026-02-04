@@ -147,7 +147,7 @@ pub fn list_security_groups() -> Vec<AwsResource> {
                 .unwrap_or_else(|| sg.group_name.clone());
 
             AwsResource {
-                name: format!("{} ({})", name, sg.group_name),
+                name: format!("{} || {} || {}", name, sg.group_name, sg.group_id),
                 id: sg.group_id,
                 state: sg.vpc_id,
                 az: String::new(),

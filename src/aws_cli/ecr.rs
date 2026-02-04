@@ -101,7 +101,10 @@ pub fn list_ecr_repositories() -> Vec<AwsResource> {
             };
 
             AwsResource {
-                name: format!("{} ({})", repo.repository_name, mutability),
+                name: format!(
+                    "{} || {} || {}",
+                    repo.repository_name, mutability, repo.repository_name
+                ),
                 id: repo.repository_name,
                 state: repo.image_tag_mutability,
                 az: String::new(),

@@ -265,7 +265,10 @@ pub fn list_load_balancers() -> Vec<AwsResource> {
             };
 
             AwsResource {
-                name: format!("{} ({})", lb.load_balancer_name, scheme_text),
+                name: format!(
+                    "{} || {} || {}",
+                    lb.load_balancer_name, scheme_text, lb.lb_type
+                ),
                 id: lb.load_balancer_arn,
                 state: lb.lb_type,
                 az: lb.vpc_id,

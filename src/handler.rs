@@ -260,13 +260,13 @@ fn process_blueprint_resources(app: &mut App, current_index: usize) {
                 .unwrap_or("");
             let header_text = header_line.trim_start_matches("## ").trim();
 
-            // GitHub 앵커 생성 규칙: 소문자, 공백->-, 특수문자(|, (, )) 제거
+            // GitHub 앵커 생성 규칙: 소문자, 공백->-, 특수문자 제거
             let anchor = header_text
                 .to_lowercase()
                 .chars()
                 .map(|c| match c {
                     ' ' => '-',
-                    '(' | ')' | '|' => '-',
+                    '(' | ')' | '|' | '\u{00B7}' => '-',
                     c if c.is_alphanumeric() || c == '-' || c == '_' => c,
                     _ => '-',
                 })
@@ -293,7 +293,7 @@ fn process_blueprint_resources(app: &mut App, current_index: usize) {
                         .chars()
                         .map(|c| match c {
                             ' ' => '-',
-                            '(' | ')' | '|' => '-',
+                            '(' | ')' | '|' | '\u{00B7}' => '-',
                             c if c.is_alphanumeric() || c == '-' || c == '_' => c,
                             _ => '-',
                         })

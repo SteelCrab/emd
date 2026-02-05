@@ -51,31 +51,85 @@ pub fn get_sdk_config() -> aws_config::SdkConfig {
 
     if has_config {
         let mutex = SDK_CONFIG.get().unwrap();
-        // This clone is cheap (SdkConfig is cheaply cloneable)
         return runtime.block_on(async {
             let guard = mutex.lock().await;
             guard.as_ref().unwrap().clone()
         });
     }
 
-    // Load new config
-    let region = {
+    // Load new config - read credentials directly from file (skip SSO completely)
+    let app_region = {
         let r = REGION.lock().unwrap();
-        r.clone().map(aws_config::Region::new)
+        r.clone()
     };
 
     let config = runtime.block_on(async {
-        let loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
-        match region {
-            Some(r) => loader.region(r).load().await,
-            None => loader.load().await,
+        // Read credentials directly from ~/.aws/credentials file
+        let credentials = read_credentials_from_file().await;
+
+        // Use app region if set, otherwise use default region (ap-southeast-1)
+        let region_str = app_region.unwrap_or_else(|| "ap-southeast-1".to_string());
+        let region = aws_config::Region::new(region_str);
+
+        let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest()).region(region);
+
+        if let Some(creds) = credentials {
+            loader = loader.credentials_provider(creds);
         }
+
+        loader.load().await
     });
 
-    // Cache it (simplified for now, might need better cache invalidation if region changes often)
-    // For now, we just return the config directly as we don't have a good way to update the global static safely without async mutex complexity
-    // But since the region is global, we can perhaps just reload it every time for now or trust the AWS SDK to handle it efficiently
     config
+}
+
+/// Read AWS credentials directly from ~/.aws/credentials file
+async fn read_credentials_from_file() -> Option<aws_credential_types::Credentials> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let home = dirs::home_dir()?;
+    let creds_path = home.join(".aws").join("credentials");
+
+    let contents = fs::read_to_string(&creds_path).ok()?;
+
+    let mut access_key = None;
+    let mut secret_key = None;
+    let mut in_default = false;
+
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.starts_with("[default]") {
+            in_default = true;
+            continue;
+        }
+        if line.starts_with('[') {
+            in_default = false;
+            continue;
+        }
+        if in_default {
+            if let Some((key, value)) = line.split_once('=') {
+                let key = key.trim();
+                let value = value.trim();
+                match key {
+                    "aws_access_key_id" => access_key = Some(value.to_string()),
+                    "aws_secret_access_key" => secret_key = Some(value.to_string()),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    match (access_key, secret_key) {
+        (Some(ak), Some(sk)) => Some(aws_credential_types::Credentials::new(
+            ak,
+            sk,
+            None,
+            None,
+            "credentials-file",
+        )),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone)]

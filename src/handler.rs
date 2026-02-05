@@ -745,16 +745,12 @@ fn handle_ec2_select(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if app.selected_index < app.instances.len() {
                 let inst = &app.instances[app.selected_index];
-                if app.blueprint_mode {
-                    add_resource_to_blueprint(
-                        app,
-                        ResourceType::Ec2,
-                        inst.id.clone(),
-                        inst.name.clone(),
-                    );
-                } else {
-                    start_loading(app, LoadingTask::LoadEc2Detail(inst.id.clone()));
-                }
+                add_resource_to_blueprint(
+                    app,
+                    ResourceType::Ec2,
+                    inst.id.clone(),
+                    inst.name.clone(),
+                );
             }
         }
         KeyCode::Char('r') => {
@@ -781,16 +777,12 @@ fn handle_vpc_select(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if app.selected_index < app.vpcs.len() {
                 let vpc = &app.vpcs[app.selected_index];
-                if app.blueprint_mode {
-                    add_resource_to_blueprint(
-                        app,
-                        ResourceType::Network,
-                        vpc.id.clone(),
-                        vpc.name.clone(),
-                    );
-                } else {
-                    start_loading(app, LoadingTask::LoadVpcDetail(vpc.id.clone(), 0));
-                }
+                add_resource_to_blueprint(
+                    app,
+                    ResourceType::Network,
+                    vpc.id.clone(),
+                    vpc.name.clone(),
+                );
             }
         }
         KeyCode::Char('r') => {
@@ -817,16 +809,12 @@ fn handle_security_group_select(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if app.selected_index < app.security_groups.len() {
                 let sg = &app.security_groups[app.selected_index];
-                if app.blueprint_mode {
-                    add_resource_to_blueprint(
-                        app,
-                        ResourceType::SecurityGroup,
-                        sg.id.clone(),
-                        sg.name.clone(),
-                    );
-                } else {
-                    start_loading(app, LoadingTask::LoadSecurityGroupDetail(sg.id.clone()));
-                }
+                add_resource_to_blueprint(
+                    app,
+                    ResourceType::SecurityGroup,
+                    sg.id.clone(),
+                    sg.name.clone(),
+                );
             }
         }
         KeyCode::Char('r') => {
@@ -853,16 +841,12 @@ fn handle_load_balancer_select(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if app.selected_index < app.load_balancers.len() {
                 let lb = &app.load_balancers[app.selected_index];
-                if app.blueprint_mode {
-                    add_resource_to_blueprint(
-                        app,
-                        ResourceType::LoadBalancer,
-                        lb.id.clone(),
-                        lb.name.clone(),
-                    );
-                } else {
-                    start_loading(app, LoadingTask::LoadLoadBalancerDetail(lb.id.clone()));
-                }
+                add_resource_to_blueprint(
+                    app,
+                    ResourceType::LoadBalancer,
+                    lb.id.clone(),
+                    lb.name.clone(),
+                );
             }
         }
         KeyCode::Char('r') => {
@@ -889,16 +873,12 @@ fn handle_ecr_select(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if app.selected_index < app.ecr_repositories.len() {
                 let repo = &app.ecr_repositories[app.selected_index];
-                if app.blueprint_mode {
-                    add_resource_to_blueprint(
-                        app,
-                        ResourceType::Ecr,
-                        repo.id.clone(),
-                        repo.name.clone(),
-                    );
-                } else {
-                    start_loading(app, LoadingTask::LoadEcrDetail(repo.id.clone()));
-                }
+                add_resource_to_blueprint(
+                    app,
+                    ResourceType::Ecr,
+                    repo.id.clone(),
+                    repo.name.clone(),
+                );
             }
         }
         KeyCode::Char('r') => {
@@ -1052,16 +1032,7 @@ fn handle_asg_select(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if app.selected_index < app.auto_scaling_groups.len() {
                 let asg = &app.auto_scaling_groups[app.selected_index];
-                if app.blueprint_mode {
-                    add_resource_to_blueprint(
-                        app,
-                        ResourceType::Asg,
-                        asg.id.clone(),
-                        asg.name.clone(),
-                    );
-                } else {
-                    start_loading(app, LoadingTask::LoadAsgDetail(asg.name.clone()));
-                }
+                add_resource_to_blueprint(app, ResourceType::Asg, asg.id.clone(), asg.name.clone());
             }
         }
         KeyCode::Char('r') => {

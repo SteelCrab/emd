@@ -295,7 +295,10 @@ fn process_blueprint_resources(app: &mut App, current_index: usize) {
         ResourceType::LoadBalancer => aws_cli::get_load_balancer_detail(&resource.resource_id)
             .map(|d| d.to_markdown(app.settings.language))
             .unwrap_or_else(|| {
-                format!("## Load Balancer: {} ({})\n", resource.resource_name, failed)
+                format!(
+                    "## Load Balancer: {} ({})\n",
+                    resource.resource_name, failed
+                )
             }),
         ResourceType::Ecr => aws_cli::get_ecr_detail(&resource.resource_id)
             .map(|d| d.to_markdown(app.settings.language))

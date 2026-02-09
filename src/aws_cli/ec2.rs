@@ -65,14 +65,26 @@ impl Ec2Detail {
         }
 
         lines.push(format!("| AMI | {} |", self.ami));
-        lines.push(format!("| {} | {} |", i18n.md_instance_type(), self.instance_type));
+        lines.push(format!(
+            "| {} | {} |",
+            i18n.md_instance_type(),
+            self.instance_type
+        ));
         lines.push(format!("| {} | {} |", i18n.md_platform(), self.platform));
-        lines.push(format!("| {} | {} |", i18n.md_architecture(), self.architecture));
+        lines.push(format!(
+            "| {} | {} |",
+            i18n.md_architecture(),
+            self.architecture
+        ));
         lines.push(format!("| {} | {} |", i18n.md_key_pair(), self.key_pair));
         lines.push(format!("| VPC | {} |", self.vpc));
         lines.push(format!("| {} | {} |", i18n.md_subnet(), self.subnet));
         lines.push(format!("| {} | {} |", i18n.md_availability_zone(), self.az));
-        lines.push(format!("| {} | {} |", i18n.md_private_ip(), self.private_ip));
+        lines.push(format!(
+            "| {} | {} |",
+            i18n.md_private_ip(),
+            self.private_ip
+        ));
 
         if self.public_ip != "-" && !self.public_ip.is_empty() {
             lines.push(format!("| {} | {} |", i18n.md_public_ip(), self.public_ip));
@@ -102,7 +114,11 @@ impl Ec2Detail {
         }
 
         if !self.launch_time.is_empty() {
-            lines.push(format!("| {} | {} |", i18n.md_launch_time(), self.launch_time));
+            lines.push(format!(
+                "| {} | {} |",
+                i18n.md_launch_time(),
+                self.launch_time
+            ));
         }
 
         // Storage section

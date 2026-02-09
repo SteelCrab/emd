@@ -228,7 +228,11 @@ impl LoadBalancerDetail {
                 lines.push("|:---|:---|".to_string());
                 lines.push(format!("| {} | {} |", i18n.md_protocol(), tg.protocol));
                 lines.push(format!("| {} | {} |", i18n.md_port(), tg.port));
-                lines.push(format!("| {} | {} |", i18n.md_target_type(), tg.target_type));
+                lines.push(format!(
+                    "| {} | {} |",
+                    i18n.md_target_type(),
+                    tg.target_type
+                ));
                 lines.push(format!(
                     "| {} | {} {} |",
                     i18n.md_health_check(),

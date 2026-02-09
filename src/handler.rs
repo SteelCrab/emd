@@ -225,7 +225,7 @@ fn process_blueprint_resources(app: &mut App, current_index: usize) {
 
     if current_index >= blueprint.resources.len() {
         // All resources loaded, generate table of contents and combine markdown
-        let mut toc = vec!["## 📑 목차\n".to_string()];
+        let mut toc = vec![format!("## {}\n", app.i18n.toc())];
         for (i, (res, markdown)) in blueprint
             .resources
             .iter()
@@ -276,29 +276,30 @@ fn process_blueprint_resources(app: &mut App, current_index: usize) {
     aws_cli::set_region(&resource.region);
 
     // Fetch resource detail and generate markdown
+    let failed = app.i18n.query_failed();
     let markdown = match resource.resource_type {
         ResourceType::Ec2 => aws_cli::get_instance_detail(&resource.resource_id)
             .map(|d| d.to_markdown(app.settings.language))
-            .unwrap_or_else(|| format!("## EC2: {} (조회 실패)\n", resource.resource_name)),
+            .unwrap_or_else(|| format!("## EC2: {} ({})\n", resource.resource_name, failed)),
         ResourceType::Network => aws_cli::get_network_detail(&resource.resource_id)
             .map(|d| d.to_markdown(app.settings.language))
-            .unwrap_or_else(|| format!("## Network: {} (조회 실패)\n", resource.resource_name)),
+            .unwrap_or_else(|| format!("## Network: {} ({})\n", resource.resource_name, failed)),
         ResourceType::SecurityGroup => aws_cli::get_security_group_detail(&resource.resource_id)
             .map(|d| d.to_markdown(app.settings.language))
             .unwrap_or_else(|| {
                 format!(
-                    "## Security Group: {} (조회 실패)\n",
-                    resource.resource_name
+                    "## Security Group: {} ({})\n",
+                    resource.resource_name, failed
                 )
             }),
         ResourceType::LoadBalancer => aws_cli::get_load_balancer_detail(&resource.resource_id)
             .map(|d| d.to_markdown(app.settings.language))
             .unwrap_or_else(|| {
-                format!("## Load Balancer: {} (조회 실패)\n", resource.resource_name)
+                format!("## Load Balancer: {} ({})\n", resource.resource_name, failed)
             }),
         ResourceType::Ecr => aws_cli::get_ecr_detail(&resource.resource_id)
             .map(|d| d.to_markdown(app.settings.language))
-            .unwrap_or_else(|| format!("## ECR: {} (조회 실패)\n", resource.resource_name)),
+            .unwrap_or_else(|| format!("## ECR: {} ({})\n", resource.resource_name, failed)),
     };
 
     app.blueprint_markdown_parts.push(markdown);

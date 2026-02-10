@@ -63,7 +63,9 @@ pub fn get_sdk_config() -> aws_config::SdkConfig {
         r.clone()
     };
 
-    let config = runtime.block_on(async {
+    
+
+    runtime.block_on(async {
         // Read credentials directly from ~/.aws/credentials file
         let credentials = read_credentials_from_file().await;
 
@@ -78,15 +80,13 @@ pub fn get_sdk_config() -> aws_config::SdkConfig {
         }
 
         loader.load().await
-    });
-
-    config
+    })
 }
 
 /// Read AWS credentials directly from ~/.aws/credentials file
 async fn read_credentials_from_file() -> Option<aws_credential_types::Credentials> {
     use std::fs;
-    use std::path::PathBuf;
+    
 
     let home = dirs::home_dir()?;
     let creds_path = home.join(".aws").join("credentials");
@@ -107,8 +107,8 @@ async fn read_credentials_from_file() -> Option<aws_credential_types::Credential
             in_default = false;
             continue;
         }
-        if in_default {
-            if let Some((key, value)) = line.split_once('=') {
+        if in_default
+            && let Some((key, value)) = line.split_once('=') {
                 let key = key.trim();
                 let value = value.trim();
                 match key {
@@ -117,7 +117,6 @@ async fn read_credentials_from_file() -> Option<aws_credential_types::Credential
                     _ => {}
                 }
             }
-        }
     }
 
     match (access_key, secret_key) {

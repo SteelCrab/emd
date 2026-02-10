@@ -1,9 +1,6 @@
 use crate::aws_cli::common::{AwsResource, get_runtime, get_sdk_config};
 use crate::i18n::{I18n, Language};
-use aws_config::BehaviorVersion;
-use aws_sdk_ecr::types::ImageDetail;
 use chrono::DateTime;
-use serde::Deserialize;
 
 #[derive(Debug)]
 pub struct EcrImageInfo {
@@ -149,7 +146,7 @@ pub fn get_ecr_detail(repo_name: &str) -> Option<EcrDetail> {
                     let pushed_at = img
                         .image_pushed_at()
                         .map(|ts| {
-                            let secs = ts.secs() as i64;
+                            let secs = ts.secs();
                             DateTime::from_timestamp(secs, 0)
                                 .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
                                 .unwrap_or_else(|| "-".to_string())
@@ -163,18 +160,14 @@ pub fn get_ecr_detail(repo_name: &str) -> Option<EcrDetail> {
                             if let Some(counts) = s.finding_severity_counts() {
                                 if let Some(&cnt) =
                                     counts.get(&aws_sdk_ecr::types::FindingSeverity::Critical)
-                                {
-                                    if cnt > 0 {
+                                    && cnt > 0 {
                                         parts.push(format!("CRITICAL:{}", cnt));
                                     }
-                                }
                                 if let Some(&cnt) =
                                     counts.get(&aws_sdk_ecr::types::FindingSeverity::High)
-                                {
-                                    if cnt > 0 {
+                                    && cnt > 0 {
                                         parts.push(format!("HIGH:{}", cnt));
                                     }
-                                }
                             }
                             if parts.is_empty() {
                                 "Passed".to_string()
@@ -198,7 +191,7 @@ pub fn get_ecr_detail(repo_name: &str) -> Option<EcrDetail> {
         let created_at = repo
             .created_at()
             .map(|ts| {
-                let secs = ts.secs() as i64;
+                let secs = ts.secs();
                 DateTime::from_timestamp(secs, 0)
                     .map(|dt| dt.format("%Y-%m-%d").to_string())
                     .unwrap_or_else(|| "-".to_string())

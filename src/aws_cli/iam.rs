@@ -77,11 +77,10 @@ fn extract_assume_role_policy(json: &str) -> String {
             }
             if end_idx > 0 {
                 let policy_json = &obj_json[..end_idx];
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(policy_json) {
-                    if let Ok(pretty) = serde_json::to_string_pretty(&parsed) {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(policy_json)
+                    && let Ok(pretty) = serde_json::to_string_pretty(&parsed) {
                         return pretty;
                     }
-                }
                 return policy_json.to_string();
             }
         }
@@ -201,11 +200,10 @@ fn get_inline_policy_document(role_name: &str, policy_name: &str) -> Option<Stri
             }
             if end_idx > 0 {
                 let policy_json = &obj_json[..end_idx];
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(policy_json) {
-                    if let Ok(pretty) = serde_json::to_string_pretty(&parsed) {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(policy_json)
+                    && let Ok(pretty) = serde_json::to_string_pretty(&parsed) {
                         return Some(pretty);
                     }
-                }
                 return Some(policy_json.to_string());
             }
         }

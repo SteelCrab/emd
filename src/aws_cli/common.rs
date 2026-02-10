@@ -19,6 +19,118 @@ pub fn get_region_args() -> Vec<String> {
     Vec::new()
 }
 
+// Async Runtime Helper
+use std::sync::OnceLock;
+use tokio::runtime::Runtime;
+
+static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+static SDK_CONFIG: OnceLock<tokio::sync::Mutex<Option<aws_config::SdkConfig>>> = OnceLock::new();
+
+pub fn get_runtime() -> &'static Runtime {
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create Tokio runtime")
+    })
+}
+
+pub fn get_sdk_config() -> aws_config::SdkConfig {
+    let runtime = get_runtime();
+
+    // Check if we already have a cached config
+    let has_config = if let Some(mutex) = SDK_CONFIG.get() {
+        if let Ok(guard) = runtime.block_on(async { mutex.try_lock() }) {
+            guard.is_some()
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if has_config {
+        let mutex = SDK_CONFIG.get().unwrap();
+        return runtime.block_on(async {
+            let guard = mutex.lock().await;
+            guard.as_ref().unwrap().clone()
+        });
+    }
+
+    // Load new config - read credentials directly from file (skip SSO completely)
+    let app_region = {
+        let r = REGION.lock().unwrap();
+        r.clone()
+    };
+
+    
+
+    runtime.block_on(async {
+        // Read credentials directly from ~/.aws/credentials file
+        let credentials = read_credentials_from_file().await;
+
+        // Use app region if set, otherwise use default region (ap-southeast-1)
+        let region_str = app_region.unwrap_or_else(|| "ap-southeast-1".to_string());
+        let region = aws_config::Region::new(region_str);
+
+        let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest()).region(region);
+
+        if let Some(creds) = credentials {
+            loader = loader.credentials_provider(creds);
+        }
+
+        loader.load().await
+    })
+}
+
+/// Read AWS credentials directly from ~/.aws/credentials file
+async fn read_credentials_from_file() -> Option<aws_credential_types::Credentials> {
+    use std::fs;
+    
+
+    let home = dirs::home_dir()?;
+    let creds_path = home.join(".aws").join("credentials");
+
+    let contents = fs::read_to_string(&creds_path).ok()?;
+
+    let mut access_key = None;
+    let mut secret_key = None;
+    let mut in_default = false;
+
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.starts_with("[default]") {
+            in_default = true;
+            continue;
+        }
+        if line.starts_with('[') {
+            in_default = false;
+            continue;
+        }
+        if in_default
+            && let Some((key, value)) = line.split_once('=') {
+                let key = key.trim();
+                let value = value.trim();
+                match key {
+                    "aws_access_key_id" => access_key = Some(value.to_string()),
+                    "aws_secret_access_key" => secret_key = Some(value.to_string()),
+                    _ => {}
+                }
+            }
+    }
+
+    match (access_key, secret_key) {
+        (Some(ak), Some(sk)) => Some(aws_credential_types::Credentials::new(
+            ak,
+            sk,
+            None,
+            None,
+            "credentials-file",
+        )),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AwsResource {
     pub name: String,
@@ -200,30 +312,4 @@ pub fn parse_resources_from_json(json: &str, prefix: &str) -> Vec<AwsResource> {
         }
     }
     resources
-}
-
-use std::sync::OnceLock;
-use tokio::runtime::Runtime;
-
-static RUNTIME: OnceLock<Runtime> = OnceLock::new();
-
-pub fn get_runtime() -> &'static Runtime {
-    RUNTIME.get_or_init(|| Runtime::new().expect("Failed to create Tokio runtime"))
-}
-
-/// Get AWS SDK config with profile-based credentials and region
-pub async fn get_sdk_config() -> aws_config::SdkConfig {
-    let profile_name = std::env::var("AWS_PROFILE").unwrap_or_else(|_| "default".to_string());
-
-    let mut config_loader =
-        aws_config::defaults(aws_config::BehaviorVersion::latest()).profile_name(&profile_name);
-
-    // Get region from REGION mutex if set
-    if let Ok(r) = REGION.lock() {
-        if let Some(ref region_str) = *r {
-            config_loader = config_loader.region(aws_config::Region::new(region_str.clone()));
-        }
-    }
-
-    config_loader.load().await
 }

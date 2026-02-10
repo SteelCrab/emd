@@ -165,9 +165,9 @@ impl LoadBalancerDetail {
         // Extract LB ID from ARN (last part after the last /)
         let lb_id = self.arn.rsplit('/').next().unwrap_or(&self.arn);
         let display_name = if self.name.is_empty() {
-            format!("NULL - {}", lb_id)
+            format!("NULL · {}", lb_id)
         } else {
-            format!("{} - {}", self.name, lb_id)
+            format!("{} · {}", self.name, lb_id)
         };
         let mut lines = vec![
             format!("## Load Balancer ({})\n", display_name),
@@ -203,7 +203,7 @@ impl LoadBalancerDetail {
         }
 
         if !self.listeners.is_empty() {
-            lines.push("\n### Listeners".to_string());
+            lines.push("\n### Listeners\n".to_string());
             lines.push(format!(
                 "| {} | {} | {} |",
                 i18n.md_port(),
@@ -222,8 +222,8 @@ impl LoadBalancerDetail {
         if !self.target_groups.is_empty() {
             lines.push("\n### Target Groups".to_string());
             for tg in &self.target_groups {
-                lines.push(format!("\n#### {}", tg.name));
-                lines.push(format!("\n**{}**", i18n.md_basic_info()));
+                lines.push(format!("\n#### {}\n", tg.name));
+                lines.push(format!("\n**{}:**\n", i18n.md_basic_info()));
                 lines.push(format!("| {} | {} |", i18n.item(), i18n.value()));
                 lines.push("|:---|:---|".to_string());
                 lines.push(format!("| {} | {} |", i18n.md_protocol(), tg.protocol));
@@ -249,7 +249,7 @@ impl LoadBalancerDetail {
                 ));
 
                 if !tg.targets.is_empty() {
-                    lines.push(format!("\n**{}**", i18n.md_targets()));
+                    lines.push(format!("\n**{}:**\n", i18n.md_targets()));
                     lines.push(format!(
                         "| Target ID | {} | {} |",
                         i18n.md_port(),
@@ -292,7 +292,10 @@ pub fn list_load_balancers() -> Vec<AwsResource> {
             };
 
             AwsResource {
-                name: format!("{} ({})", lb.load_balancer_name, scheme_text),
+                name: format!(
+                    "{} || {} || {}",
+                    lb.load_balancer_name, scheme_text, lb.lb_type
+                ),
                 id: lb.load_balancer_arn,
                 state: lb.lb_type,
                 az: lb.vpc_id,

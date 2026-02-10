@@ -350,7 +350,9 @@ pub fn get_instance_detail(instance_id: &str) -> Option<Ec2Detail> {
         .and_then(|arn| arn.split('/').next_back().map(|s| s.to_string()));
 
     // IAM Role Detail - 역할이 있으면 상세 정보 조회
-    let iam_role_detail = iam_role.as_ref().and_then(|role_name| get_iam_role_detail(role_name));
+    let iam_role_detail = iam_role
+        .as_ref()
+        .and_then(|role_name| get_iam_role_detail(role_name));
 
     // Launch Time
     let launch_time = extract_json_value(json, "LaunchTime").unwrap_or_default();

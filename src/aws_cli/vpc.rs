@@ -1,6 +1,5 @@
 use crate::aws_cli::common::{
-    AwsResource, Tag, extract_json_value, extract_tags, parse_name_tag, parse_resources_from_json,
-    run_aws_cli,
+    AwsResource, Tag, extract_json_value, extract_tags, parse_name_tag, run_aws_cli,
 };
 use crate::aws_cli::ec2::get_subnet_name;
 use crate::i18n::{I18n, Language};
@@ -125,9 +124,9 @@ impl NetworkDetail {
     pub fn to_markdown(&self, lang: Language) -> String {
         let i18n = I18n::new(lang);
         let vpc_display = if self.name.is_empty() || self.name == self.id {
-            format!("NULL - {}", self.id)
+            format!("NULL · {}", self.id)
         } else {
-            format!("{} - {}", self.name, self.id)
+            format!("{} · {}", self.name, self.id)
         };
         let mut lines = vec![format!("## Network ({})\n", vpc_display)];
 
@@ -153,7 +152,7 @@ impl NetworkDetail {
         }
 
         if !self.subnets.is_empty() {
-            lines.push(format!("\n### {}", i18n.md_subnets()));
+            lines.push(format!("\n### {}\n", i18n.md_subnets()));
             lines.push(format!(
                 "| {} | CIDR | AZ | {} |",
                 i18n.md_name(),
@@ -169,7 +168,7 @@ impl NetworkDetail {
         }
 
         if !self.igws.is_empty() {
-            lines.push(format!("\n### {}", i18n.md_internet_gateway()));
+            lines.push(format!("\n### {}\n", i18n.md_internet_gateway()));
             lines.push(format!(
                 "| {} | {} |",
                 i18n.md_name(),
@@ -178,9 +177,9 @@ impl NetworkDetail {
             lines.push("|:---|:---|".to_string());
             for igw in &self.igws {
                 let igw_display = if igw.name.is_empty() || igw.name == igw.id {
-                    format!("NULL - {}", igw.id)
+                    format!("NULL · {}", igw.id)
                 } else {
-                    format!("{} - {}", igw.name, igw.id)
+                    format!("{} · {}", igw.name, igw.id)
                 };
                 lines.push(format!("| {} | {} |", igw_display, vpc_display));
             }
@@ -190,9 +189,9 @@ impl NetworkDetail {
             lines.push(format!("\n### {}", i18n.md_nat_gateway()));
             for nat in &self.nats {
                 let nat_display = if nat.name.is_empty() || nat.name == nat.id {
-                    format!("NULL - {}", nat.id)
+                    format!("NULL · {}", nat.id)
                 } else {
-                    format!("{} - {}", nat.name, nat.id)
+                    format!("{} · {}", nat.name, nat.id)
                 };
                 lines.push(format!("\n#### {}", nat_display));
                 lines.push(format!("| {} | {} |", i18n.item(), i18n.value()));
@@ -242,16 +241,16 @@ impl NetworkDetail {
                         .find(|s| s.id == nat.subnet_id)
                         .map(|s| {
                             if s.name.is_empty() {
-                                format!("NULL - {}", s.id)
+                                format!("NULL · {}", s.id)
                             } else {
-                                format!("{} - {}", s.name, s.id)
+                                format!("{} · {}", s.name, s.id)
                             }
                         })
                         .unwrap_or_else(|| {
                             if nat.subnet_id.is_empty() {
                                 "-".to_string()
                             } else {
-                                format!("NULL - {}", nat.subnet_id)
+                                format!("NULL · {}", nat.subnet_id)
                             }
                         });
                     lines.push(format!("| {} | {} |", i18n.md_subnet(), subnet_display));
@@ -287,11 +286,11 @@ impl NetworkDetail {
             lines.push(format!("\n### {}", i18n.md_route_tables()));
             for rt in &self.route_tables {
                 let display_name = if rt.name.is_empty() {
-                    format!("NULL - {}", rt.id)
+                    format!("NULL · {}", rt.id)
                 } else {
-                    format!("{} - {}", rt.name, rt.id)
+                    format!("{} · {}", rt.name, rt.id)
                 };
-                lines.push(format!("\n#### {}", display_name));
+                lines.push(format!("\n#### {}\n", display_name));
 
                 if !rt.routes.is_empty() {
                     lines.push(format!(
@@ -310,7 +309,7 @@ impl NetworkDetail {
                 }
 
                 if !rt.associations.is_empty() {
-                    lines.push(format!("\n**{}**", i18n.md_associated_subnets()));
+                    lines.push(format!("\n**{}:**\n", i18n.md_associated_subnets()));
                     lines.push(format!("| {} |", i18n.md_subnet()));
                     lines.push("|:---|".to_string());
                     for assoc in &rt.associations {
@@ -321,7 +320,7 @@ impl NetworkDetail {
         }
 
         if !self.eips.is_empty() {
-            lines.push("\n### Elastic IPs".to_string());
+            lines.push("\n### Elastic IPs\n".to_string());
             lines.push(format!(
                 "| {} | Public IP | {} |",
                 i18n.md_name(),
@@ -503,19 +502,56 @@ impl NetworkDetail {
 
 // Public functions
 pub fn list_vpcs() -> Vec<AwsResource> {
-    let output = match run_aws_cli(&[
-        "ec2",
-        "describe-vpcs",
-        "--query",
-        "Vpcs[*].[VpcId,Tags]",
-        "--output",
-        "json",
-    ]) {
+    let output = match run_aws_cli(&["ec2", "describe-vpcs", "--output", "json"]) {
         Some(o) => o,
         None => return Vec::new(),
     };
 
-    parse_resources_from_json(&output, "vpc-")
+    parse_vpcs(&output)
+}
+
+fn parse_vpcs(json: &str) -> Vec<AwsResource> {
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct VpcsResponse {
+        vpcs: Vec<VpcInfo>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct VpcInfo {
+        vpc_id: String,
+        cidr_block: String,
+        state: String,
+        #[serde(default)]
+        tags: Vec<Tag>,
+    }
+
+    let response: VpcsResponse = match serde_json::from_str(json) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+
+    response
+        .vpcs
+        .into_iter()
+        .map(|vpc| {
+            let name = vpc
+                .tags
+                .iter()
+                .find(|t| t.key == "Name")
+                .map(|t| t.value.clone())
+                .unwrap_or_default();
+
+            AwsResource {
+                name: format!("{} || {} || {}", name, vpc.vpc_id, vpc.cidr_block),
+                id: vpc.vpc_id,
+                state: vpc.state,
+                az: String::new(),
+                cidr: vpc.cidr_block,
+            }
+        })
+        .collect()
 }
 
 pub fn list_subnets(vpc_id: &str) -> Vec<AwsResource> {

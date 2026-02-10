@@ -143,7 +143,7 @@ pub fn list_auto_scaling_groups() -> Vec<AwsResource> {
 }
 
 async fn list_auto_scaling_groups_async() -> Vec<AwsResource> {
-    let config = get_sdk_config().await;
+    let config = get_sdk_config();
     let client = Client::new(&config);
 
     let result = client.describe_auto_scaling_groups().send().await;
@@ -184,7 +184,7 @@ pub fn get_asg_detail(asg_name: &str) -> Option<AsgDetail> {
 }
 
 async fn get_asg_detail_async(asg_name: &str) -> Option<AsgDetail> {
-    let config = get_sdk_config().await;
+    let config = get_sdk_config();
     let client = Client::new(&config);
 
     // Get ASG details

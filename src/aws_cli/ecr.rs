@@ -1,44 +1,14 @@
-use crate::aws_cli::common::{AwsResource, run_aws_cli};
+use crate::aws_cli::common::{AwsResource, get_runtime, get_sdk_config};
 use crate::i18n::{I18n, Language};
-use serde::Deserialize;
+use chrono::DateTime;
 
-#[derive(Debug, Deserialize)]
-struct EcrRepositoriesResponse {
-    repositories: Vec<EcrRepository>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EcrRepository {
-    repository_name: String,
-    repository_uri: String,
-    #[serde(default)]
-    image_tag_mutability: String,
-    #[serde(default)]
-    encryption_configuration: Option<EcrEncryptionConfiguration>,
-    #[serde(default)]
-    created_at: Option<f64>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EcrEncryptionConfiguration {
-    encryption_type: String,
-    #[serde(default)]
-    kms_key: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EcrImagesResponse {
-    image_details: Vec<EcrImageDetail>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EcrImageDetail {
-    #[allow(dead_code)]
-    image_digest: String,
+#[derive(Debug)]
+pub struct EcrImageInfo {
+    pub tag: String,
+    pub digest: String,
+    pub size_mb: f64,
+    pub pushed_at: String,
+    pub scan_status: String,
 }
 
 #[derive(Debug)]
@@ -50,6 +20,7 @@ pub struct EcrDetail {
     pub kms_key: Option<String>,
     pub created_at: String,
     pub image_count: i32,
+    pub images: Vec<EcrImageInfo>,
 }
 
 impl EcrDetail {
@@ -65,7 +36,7 @@ impl EcrDetail {
             "AES-256".to_string()
         };
 
-        let lines = vec![
+        let mut lines = vec![
             format!("## {} ({})\n", i18n.md_ecr_repository(), self.name),
             format!("| {} | {} |", i18n.item(), i18n.value()),
             "|:---|:---|".to_string(),
@@ -77,92 +48,181 @@ impl EcrDetail {
             format!("| {} | {} |", i18n.md_created_at(), self.created_at),
         ];
 
+        if !self.images.is_empty() {
+            lines.push("\n### 이미지 목록\n".to_string());
+            lines.push("| 태그 | 크기 (MB) | 푸시 날짜 | 스캔 상태 |".to_string());
+            lines.push("|:---|---:|:---|:---|".to_string());
+
+            let mut images = self.images.iter().collect::<Vec<_>>();
+            images.sort_by(|a, b| b.pushed_at.cmp(&a.pushed_at));
+
+            for img in images.iter().take(20) {
+                lines.push(format!(
+                    "| {} | {:.2} | {} | {} |",
+                    img.tag, img.size_mb, img.pushed_at, img.scan_status
+                ));
+            }
+        }
+
         lines.join("\n") + "\n"
     }
 }
 
 pub fn list_ecr_repositories() -> Vec<AwsResource> {
-    let output = match run_aws_cli(&["ecr", "describe-repositories", "--output", "json"]) {
-        Some(o) => o,
-        None => return Vec::new(),
-    };
+    let rt = get_runtime();
+    let config = get_sdk_config();
+    let client = aws_sdk_ecr::Client::new(&config);
 
-    let response: EcrRepositoriesResponse = match serde_json::from_str(&output) {
-        Ok(r) => r,
-        Err(_) => return Vec::new(),
-    };
+    rt.block_on(async {
+        match client.describe_repositories().send().await {
+            Ok(output) => output
+                .repositories()
+                .iter()
+                .map(|repo| {
+                    let name = repo.repository_name().unwrap_or("").to_string();
+                    let uri = repo.repository_uri().unwrap_or("").to_string();
+                    let mutability_raw = repo
+                        .image_tag_mutability()
+                        .map(|m| m.as_str())
+                        .unwrap_or("UNKNOWN");
 
-    response
-        .repositories
-        .into_iter()
-        .map(|repo| {
-            let mutability = if repo.image_tag_mutability == "IMMUTABLE" {
-                "Immutable"
-            } else {
-                "Mutable"
-            };
+                    let mutability = if mutability_raw == "IMMUTABLE" {
+                        "Immutable"
+                    } else {
+                        "Mutable"
+                    };
 
-            AwsResource {
-                name: format!("{} ({})", repo.repository_name, mutability),
-                id: repo.repository_name,
-                state: repo.image_tag_mutability,
-                az: String::new(),
-                cidr: repo.repository_uri,
+                    AwsResource {
+                        name: format!("{} · {} · {}", name, mutability, name),
+                        id: name,
+                        state: mutability_raw.to_string(),
+                        az: String::new(),
+                        cidr: uri,
+                    }
+                })
+                .collect(),
+            Err(e) => {
+                eprintln!("Error listing ECR repositories: {:?}", e);
+                Vec::new()
             }
-        })
-        .collect()
+        }
+    })
 }
 
 pub fn get_ecr_detail(repo_name: &str) -> Option<EcrDetail> {
-    let output = run_aws_cli(&[
-        "ecr",
-        "describe-repositories",
-        "--repository-names",
-        repo_name,
-        "--output",
-        "json",
-    ])?;
+    let rt = get_runtime();
+    let config = get_sdk_config();
+    let client = aws_sdk_ecr::Client::new(&config);
 
-    let response: EcrRepositoriesResponse = serde_json::from_str(&output).ok()?;
-    let repo = response.repositories.first()?;
+    rt.block_on(async {
+        // 1. 레포지토리 정보 조회
+        let repo_output = client
+            .describe_repositories()
+            .repository_names(repo_name)
+            .send()
+            .await
+            .ok()?;
 
-    let images_output = run_aws_cli(&[
-        "ecr",
-        "describe-images",
-        "--repository-name",
-        repo_name,
-        "--output",
-        "json",
-    ]);
+        let repo = repo_output.repositories().first()?;
 
-    let image_count = images_output
-        .and_then(|o| serde_json::from_str::<EcrImagesResponse>(&o).ok())
-        .map(|r| r.image_details.len() as i32)
-        .unwrap_or(0);
+        // 2. 이미지 목록 조회
+        let images_output = client
+            .describe_images()
+            .repository_name(repo_name)
+            .send()
+            .await
+            .ok();
 
-    let created_at = repo
-        .created_at
-        .map(|ts| {
-            let secs = ts as i64;
-            chrono::DateTime::from_timestamp(secs, 0)
-                .map(|dt| dt.format("%Y-%m-%d").to_string())
-                .unwrap_or_else(|| "-".to_string())
+        let mut images = Vec::new();
+        let mut image_count = 0;
+
+        if let Some(output) = images_output {
+            image_count = output.image_details().len() as i32;
+
+            for img in output.image_details() {
+                let tags = img.image_tags();
+                for tag in tags {
+                    let size_mb = img.image_size_in_bytes().unwrap_or(0) as f64 / 1024.0 / 1024.0;
+                    let pushed_at = img
+                        .image_pushed_at()
+                        .map(|ts| {
+                            let secs = ts.secs();
+                            DateTime::from_timestamp(secs, 0)
+                                .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                                .unwrap_or_else(|| "-".to_string())
+                        })
+                        .unwrap_or_else(|| "-".to_string());
+
+                    let scan_status = img
+                        .image_scan_findings_summary()
+                        .map(|s| {
+                            let mut parts = Vec::new();
+                            if let Some(counts) = s.finding_severity_counts() {
+                                if let Some(&cnt) =
+                                    counts.get(&aws_sdk_ecr::types::FindingSeverity::Critical)
+                                    && cnt > 0 {
+                                        parts.push(format!("CRITICAL:{}", cnt));
+                                    }
+                                if let Some(&cnt) =
+                                    counts.get(&aws_sdk_ecr::types::FindingSeverity::High)
+                                    && cnt > 0 {
+                                        parts.push(format!("HIGH:{}", cnt));
+                                    }
+                            }
+                            if parts.is_empty() {
+                                "Passed".to_string()
+                            } else {
+                                parts.join(", ")
+                            }
+                        })
+                        .unwrap_or_else(|| "No Scan".to_string());
+
+                    images.push(EcrImageInfo {
+                        tag: tag.clone(),
+                        digest: img.image_digest().unwrap_or("").to_string(),
+                        size_mb,
+                        pushed_at,
+                        scan_status,
+                    });
+                }
+            }
+        }
+
+        let created_at = repo
+            .created_at()
+            .map(|ts| {
+                let secs = ts.secs();
+                DateTime::from_timestamp(secs, 0)
+                    .map(|dt| dt.format("%Y-%m-%d").to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            })
+            .unwrap_or_else(|| "-".to_string());
+
+        let (encryption_type, kms_key) = repo
+            .encryption_configuration()
+            .map(|enc| {
+                (
+                    enc.encryption_type().as_str().to_string(),
+                    enc.kms_key().map(|k| k.to_string()),
+                )
+            })
+            .unwrap_or_else(|| ("AES256".to_string(), None));
+
+        let tag_mutability = repo
+            .image_tag_mutability()
+            .map(|m| m.as_str())
+            .unwrap_or("UNKNOWN")
+            .to_string();
+
+        Some(EcrDetail {
+            name: repo.repository_name().unwrap_or("").to_string(),
+            uri: repo.repository_uri().unwrap_or("").to_string(),
+            tag_mutability,
+            encryption_type,
+            kms_key,
+            created_at,
+            image_count,
+            images,
         })
-        .unwrap_or_else(|| "-".to_string());
-
-    let (encryption_type, kms_key) = repo
-        .encryption_configuration
-        .as_ref()
-        .map(|enc| (enc.encryption_type.clone(), enc.kms_key.clone()))
-        .unwrap_or_else(|| ("AES256".to_string(), None));
-
-    Some(EcrDetail {
-        name: repo.repository_name.clone(),
-        uri: repo.repository_uri.clone(),
-        tag_mutability: repo.image_tag_mutability.clone(),
-        encryption_type,
-        kms_key,
-        created_at,
-        image_count,
     })
 }

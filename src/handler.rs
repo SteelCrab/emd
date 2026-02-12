@@ -223,6 +223,15 @@ pub fn process_loading(app: &mut App) {
             app.screen = Screen::AsgSelect;
             finish_loading(app);
         }
+        LoadingTask::LoadAsgDetail(name) => {
+            if let Some(detail) = aws_cli::get_asg_detail(&name) {
+                app.preview_content = detail.to_markdown();
+                app.preview_filename = format!("{}.md", detail.name);
+                app.asg_detail = Some(detail);
+                app.screen = Screen::Preview;
+            }
+            finish_loading(app);
+        }
 
         LoadingTask::LoadBlueprintResources(current_index) => {
             process_blueprint_resources(app, current_index);
@@ -1044,7 +1053,16 @@ fn handle_asg_select(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if app.selected_index < app.auto_scaling_groups.len() {
                 let asg = &app.auto_scaling_groups[app.selected_index];
-                add_resource_to_blueprint(app, ResourceType::Asg, asg.id.clone(), asg.name.clone());
+                if app.blueprint_mode {
+                    add_resource_to_blueprint(
+                        app,
+                        ResourceType::Asg,
+                        asg.id.clone(),
+                        asg.name.clone(),
+                    );
+                } else {
+                    start_loading(app, LoadingTask::LoadAsgDetail(asg.name.clone()));
+                }
             }
         }
         KeyCode::Char('r') => {

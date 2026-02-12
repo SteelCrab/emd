@@ -130,12 +130,6 @@ pub fn process_loading(app: &mut App) {
             app.screen = Screen::Ec2Select;
             finish_loading(app);
         }
-        LoadingTask::LoadVpc => {
-            app.vpcs = aws_cli::list_vpcs();
-            app.selected_index = 0;
-            app.screen = Screen::VpcSelect;
-            finish_loading(app);
-        }
         LoadingTask::LoadEc2Detail(id) => {
             if let Some(detail) = aws_cli::get_instance_detail(&id) {
                 app.preview_content = detail.to_markdown(app.settings.language);
@@ -145,6 +139,13 @@ pub fn process_loading(app: &mut App) {
             }
             finish_loading(app);
         }
+        LoadingTask::LoadVpc => {
+            app.vpcs = aws_cli::list_vpcs();
+            app.selected_index = 0;
+            app.screen = Screen::VpcSelect;
+            finish_loading(app);
+        }
+
         LoadingTask::LoadVpcDetail(id, step) => {
             process_vpc_detail_step(app, &id, step);
         }
@@ -168,6 +169,7 @@ pub fn process_loading(app: &mut App) {
             }
             finish_loading(app);
         }
+
         LoadingTask::RefreshLoadBalancer => {
             app.load_balancers = aws_cli::list_load_balancers();
             app.message = app.i18n.refresh_complete().to_string();
@@ -179,8 +181,8 @@ pub fn process_loading(app: &mut App) {
             app.screen = Screen::LoadBalancerSelect;
             finish_loading(app);
         }
-        LoadingTask::LoadLoadBalancerDetail(arn) => {
-            if let Some(detail) = aws_cli::get_load_balancer_detail(&arn) {
+        LoadingTask::LoadLoadBalancerDetail(id) => {
+            if let Some(detail) = aws_cli::get_load_balancer_detail(&id) {
                 app.preview_content = detail.to_markdown(app.settings.language);
                 app.preview_filename = format!("{}.md", detail.name);
                 app.lb_detail = Some(detail);
@@ -188,6 +190,7 @@ pub fn process_loading(app: &mut App) {
             }
             finish_loading(app);
         }
+
         LoadingTask::RefreshEcr => {
             app.ecr_repositories = aws_cli::list_ecr_repositories();
             app.message = app.i18n.refresh_complete().to_string();
@@ -199,8 +202,8 @@ pub fn process_loading(app: &mut App) {
             app.screen = Screen::EcrSelect;
             finish_loading(app);
         }
-        LoadingTask::LoadEcrDetail(name) => {
-            if let Some(detail) = aws_cli::get_ecr_detail(&name) {
+        LoadingTask::LoadEcrDetail(id) => {
+            if let Some(detail) = aws_cli::get_ecr_detail(&id) {
                 app.preview_content = detail.to_markdown(app.settings.language);
                 app.preview_filename = format!("{}.md", detail.name);
                 app.ecr_detail = Some(detail);
@@ -208,6 +211,7 @@ pub fn process_loading(app: &mut App) {
             }
             finish_loading(app);
         }
+
         LoadingTask::RefreshAsg => {
             app.auto_scaling_groups = aws_cli::list_auto_scaling_groups();
             app.message = app.i18n.refresh_complete().to_string();
@@ -323,22 +327,15 @@ fn process_blueprint_resources(app: &mut App, current_index: usize) {
             }),
         ResourceType::Ecr => aws_cli::get_ecr_detail(&resource.resource_id)
             .map(|d| d.to_markdown(app.settings.language))
-            .unwrap_or_else(|| format!("## ECR: {} (Query Failed)\n", resource.resource_name)),
-        ResourceType::Asg => aws_cli::get_asg_detail(&resource.resource_id)
-            .map(|d| d.to_markdown())
-<<<<<<< HEAD
-            .unwrap_or_else(|| format!("## ASG: {} (Query Failed)\n", resource.resource_name)),
-=======
-            .unwrap_or_else(|| format!("## ECR: {} (조회 실패)\n", resource.resource_name)),
+            .unwrap_or_else(|| format!("## ECR: {} ({})\n", resource.resource_name, failed)),
         ResourceType::Asg => aws_cli::get_asg_detail(&resource.resource_id)
             .map(|d| d.to_markdown())
             .unwrap_or_else(|| {
                 format!(
-                    "## Auto Scaling Group: {} (조회 실패)\n",
-                    resource.resource_name
+                    "## Auto Scaling Group: {} ({})\n",
+                    resource.resource_name, failed
                 )
             }),
->>>>>>> 2292d9a (feat(asg): add Auto Scaling Group support)
     };
 
     app.blueprint_markdown_parts.push(markdown);
@@ -442,36 +439,6 @@ fn start_loading(app: &mut App, task: LoadingTask) {
     app.loading_progress.reset();
     app.loading_task = task;
     app.message = app.i18n.loading_msg().to_string();
-}
-
-/// Add a resource directly to the current blueprint
-fn add_resource_to_blueprint(
-    app: &mut App,
-    resource_type: ResourceType,
-    resource_id: String,
-    resource_name: String,
-) {
-    let region = REGIONS[app.selected_region].code.to_string();
-    let resource = BlueprintResource {
-        resource_type,
-        region,
-        resource_id,
-        resource_name,
-    };
-
-    if let Some(ref mut bp) = app.current_blueprint {
-        bp.add_resource(resource);
-        app.message = app.i18n.resource_added().to_string();
-
-        // Update in store
-        if let Some(stored) = app
-            .blueprint_store
-            .get_blueprint_mut(app.selected_blueprint_index.saturating_sub(1))
-        {
-            *stored = bp.clone();
-        }
-        app.save_blueprints();
-    }
 }
 
 fn handle_login(app: &mut App, key: KeyEvent) {
@@ -923,33 +890,6 @@ fn handle_ecr_select(app: &mut App, key: KeyEvent) {
     }
 }
 
-fn handle_asg_select(app: &mut App, key: KeyEvent) {
-    match key.code {
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.selected_index > 0 {
-                app.selected_index -= 1;
-            }
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if app.selected_index < app.auto_scaling_groups.len().saturating_sub(1) {
-                app.selected_index += 1;
-            }
-        }
-        KeyCode::Enter => {
-            if app.selected_index < app.auto_scaling_groups.len() {
-                let name = app.auto_scaling_groups[app.selected_index].id.clone();
-                start_loading(app, LoadingTask::LoadAsgDetail(name));
-            }
-        }
-        KeyCode::Char('r') => {
-            start_loading(app, LoadingTask::RefreshAsg);
-        }
-        KeyCode::Esc => app.screen = Screen::ServiceSelect,
-        KeyCode::Char('q') => app.running = false,
-        _ => {}
-    }
-}
-
 fn handle_preview(app: &mut App, key: KeyEvent) {
     let content_lines = app.preview_content.lines().count() as u16;
 
@@ -1092,24 +1032,14 @@ fn handle_asg_select(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if app.selected_index < app.auto_scaling_groups.len() {
                 let asg = &app.auto_scaling_groups[app.selected_index];
-                if app.blueprint_mode {
-                    add_resource_to_blueprint(
-                        app,
-                        ResourceType::Asg,
-                        asg.id.clone(),
-                        asg.name.clone(),
-                    );
-                } else {
-                    start_loading(app, LoadingTask::LoadAsgDetail(asg.name.clone()));
-                }
+                add_resource_to_blueprint(app, ResourceType::Asg, asg.id.clone(), asg.name.clone());
             }
         }
         KeyCode::Char('r') => {
             start_loading(app, LoadingTask::RefreshAsg);
         }
-        KeyCode::Esc | KeyCode::Char('q') => {
-            app.screen = Screen::ServiceSelect;
-        }
+        KeyCode::Esc => app.screen = Screen::ServiceSelect,
+        KeyCode::Char('q') => app.running = false,
         _ => {}
     }
 }

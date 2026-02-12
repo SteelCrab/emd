@@ -477,7 +477,6 @@ impl I18n {
             Language::English => "Loading Auto Scaling Group details",
         }
     }
-
     pub fn no_asgs(&self) -> &'static str {
         match self.lang {
             Language::Korean => "Auto Scaling Group이 없습니다.",

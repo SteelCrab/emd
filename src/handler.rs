@@ -232,6 +232,7 @@ pub fn process_loading(app: &mut App) {
             }
             finish_loading(app);
         }
+
         LoadingTask::LoadBlueprintResources(current_index) => {
             process_blueprint_resources(app, current_index);
         }

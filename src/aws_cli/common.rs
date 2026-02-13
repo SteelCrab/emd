@@ -80,26 +80,39 @@ fn arg_value<'a>(args: &'a [&str], flag: &str) -> Option<&'a str> {
         .find_map(|pair| (pair[0] == flag).then_some(pair[1]))
 }
 
-fn has_flag(args: &[&str], flag: &str) -> bool {
-    args.contains(&flag)
-}
-
 fn parse_filter_value(raw: &str, expected_name: &str) -> Option<String> {
     let mut name = None;
-    let mut values = None;
+    let mut values: Option<String> = None;
+    let segments = raw.split(',').collect::<Vec<_>>();
+    let mut i = 0;
 
-    for segment in raw.split(',') {
+    while i < segments.len() {
+        let segment = segments[i];
         if let Some((k, v)) = segment.split_once('=') {
             match k {
                 "Name" => name = Some(v),
-                "Values" => values = Some(v),
+                "Values" => {
+                    let mut combined = v.to_string();
+                    let mut j = i + 1;
+                    while j < segments.len() && !segments[j].contains('=') {
+                        if !segments[j].is_empty() {
+                            combined.push(',');
+                            combined.push_str(segments[j]);
+                        }
+                        j += 1;
+                    }
+                    values = Some(combined);
+                    i = j;
+                    continue;
+                }
                 _ => {}
             }
         }
+        i += 1;
     }
 
     if name == Some(expected_name) {
-        values.map(|v| v.to_string())
+        values
     } else {
         None
     }
@@ -339,9 +352,9 @@ async fn ec2_describe_volumes(client: &aws_sdk_ec2::Client, args: &[&str]) -> Op
         .map(|volume| {
             json!({
                 "VolumeId": volume.volume_id().unwrap_or_default(),
-                "Size": volume.size().unwrap_or_default().to_string(),
+                "Size": volume.size().unwrap_or_default(),
                 "VolumeType": volume.volume_type().map(|v| v.as_str()).unwrap_or("unknown"),
-                "Iops": volume.iops().map(|v| v.to_string()).unwrap_or_default(),
+                "Iops": volume.iops().map(i64::from).unwrap_or_default(),
                 "Encrypted": volume.encrypted().unwrap_or(false)
             })
         })
@@ -384,7 +397,9 @@ async fn ec2_describe_vpcs(client: &aws_sdk_ec2::Client, args: &[&str]) -> Optio
 
     let output = req.send().await.ok()?;
 
-    if has_flag(args, "--query") {
+    if let Some(query) = arg_value(args, "--query")
+        && query == "Vpcs[*].[VpcId,Tags]"
+    {
         let mut rows = output
             .vpcs()
             .iter()
@@ -477,7 +492,9 @@ async fn ec2_describe_internet_gateways(
 
     let output = req.send().await.ok()?;
 
-    if has_flag(args, "--query") {
+    if let Some(query) = arg_value(args, "--query")
+        && query == "InternetGateways[*].[InternetGatewayId,Tags,Attachments]"
+    {
         let rows = output
             .internet_gateways()
             .iter()
@@ -567,9 +584,6 @@ async fn ec2_describe_nat_gateways(client: &aws_sdk_ec2::Client, args: &[&str]) 
                 "SubnetId": nat.subnet_id().unwrap_or_default(),
                 "State": nat.state().map(|s| s.as_str()).unwrap_or("unknown"),
                 "ConnectivityType": nat.connectivity_type().map(|v| v.as_str()).unwrap_or_default(),
-                "AvailabilityMode": "",
-                "AutoScalingIps": "",
-                "AutoProvisionZones": "",
                 "NatGatewayAddresses": addresses,
                 "Tags": parse_tags_ec2(nat.tags())
             })
@@ -594,7 +608,9 @@ async fn ec2_describe_route_tables(client: &aws_sdk_ec2::Client, args: &[&str]) 
 
     let output = req.send().await.ok()?;
 
-    if has_flag(args, "--query") {
+    if let Some(query) = arg_value(args, "--query")
+        && query == "RouteTables[*].[RouteTableId,Tags,Routes,Associations]"
+    {
         let rows = output
             .route_tables()
             .iter()
@@ -691,7 +707,7 @@ async fn ec2_describe_addresses(client: &aws_sdk_ec2::Client) -> Option<String> 
         })
         .collect::<Vec<_>>();
 
-    value_to_json_string(Value::Array(addresses))
+    value_to_json_string(json!({ "Addresses": addresses }))
 }
 
 async fn ec2_describe_vpc_attribute(client: &aws_sdk_ec2::Client, args: &[&str]) -> Option<String> {
@@ -1167,7 +1183,12 @@ async fn run_iam_request(
 
 fn parse_policy_json(policy: Option<&str>) -> Value {
     policy
-        .and_then(|document| serde_json::from_str::<Value>(document).ok())
+        .and_then(|document| {
+            let decoded = percent_encoding::percent_decode_str(document)
+                .decode_utf8()
+                .ok()?;
+            serde_json::from_str::<Value>(&decoded).ok()
+        })
         .unwrap_or_else(|| Value::String(policy.unwrap_or_default().to_string()))
 }
 

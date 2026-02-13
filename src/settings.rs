@@ -44,3 +44,62 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), std::io::Error> {
     fs::write(&path, content)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{AppSettings, load_settings, save_settings};
+    use crate::i18n::Language;
+    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn temp_home(prefix: &str) -> PathBuf {
+        let mut path = env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        path.push(format!("emd-{}-{}-{}", prefix, std::process::id(), nanos));
+        path
+    }
+
+    #[test]
+    fn load_and_save_settings_round_trip_with_temp_home() {
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        let original_home = env::var_os("HOME");
+        let home = temp_home("settings");
+        fs::create_dir_all(&home).expect("create temp home");
+
+        unsafe {
+            env::set_var("HOME", &home);
+        }
+
+        let initial = load_settings();
+        assert_eq!(initial.language, Language::English);
+
+        let to_save = AppSettings {
+            language: Language::Korean,
+        };
+        save_settings(&to_save).expect("save settings");
+
+        let loaded = load_settings();
+        assert_eq!(loaded.language, Language::Korean);
+
+        if let Some(v) = original_home {
+            unsafe {
+                env::set_var("HOME", v);
+            }
+        } else {
+            unsafe {
+                env::remove_var("HOME");
+            }
+        }
+        let _ = fs::remove_dir_all(&home);
+    }
+}

@@ -1194,3 +1194,208 @@ impl I18n {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{I18n, Language};
+
+    fn assert_all_labels_non_empty(i: &I18n) {
+        macro_rules! assert_non_empty {
+            ($($method:ident),+ $(,)?) => {
+                $(
+                    assert!(
+                        !i.$method().is_empty(),
+                        "{} should not be empty",
+                        stringify!($method)
+                    );
+                )+
+            };
+        }
+
+        assert_non_empty!(
+            exit,
+            settings,
+            main_tab,
+            back,
+            select,
+            move_cursor,
+            refresh,
+            save,
+            delete,
+            add,
+            cancel,
+            confirm,
+            scroll,
+            page,
+            generate,
+            reorder,
+            retry,
+            single_mode,
+            add_to_blueprint,
+            markdown_generate,
+            login,
+            region,
+            service,
+            blueprint,
+            preview,
+            loading,
+            loading_msg,
+            aws_cli_waiting,
+            refresh_complete,
+            save_complete,
+            resource_added,
+            resource_deleted,
+            blueprint_saved,
+            blueprint_deleted,
+            no_resources,
+            no_instances,
+            no_vpcs,
+            no_security_groups,
+            no_load_balancers,
+            no_ecr_repos,
+            aws_login_verified,
+            aws_login_required,
+            aws_login_checking,
+            aws_configure_hint,
+            processing,
+            refreshing_ec2_list,
+            refreshing_vpc_list,
+            refreshing_sg_list,
+            refreshing_preview,
+            loading_ec2_list,
+            loading_vpc_list,
+            loading_sg_list,
+            loading_ec2_detail,
+            loading_vpc_detail,
+            loading_sg_detail,
+            refreshing_lb_list,
+            loading_lb_list,
+            loading_lb_detail,
+            refreshing_ecr_list,
+            loading_ecr_list,
+            loading_ecr_detail,
+            loading_asg_list,
+            loading_asg_detail,
+            no_asgs,
+            auto_scaling_group,
+            loading_blueprint_resources,
+            vpc_basic_info,
+            subnets,
+            internet_gateway,
+            nat_gateway,
+            route_tables,
+            elastic_ip,
+            dns_settings,
+            completing,
+            new_blueprint,
+            blueprint_load_failed,
+            enter_blueprint_name,
+            press_a_to_add,
+            resources,
+            language,
+            language_setting,
+            settings_saved,
+            change,
+            item,
+            value,
+            md_name,
+            md_state,
+            tag,
+            toc,
+            query_failed,
+            md_dns_support,
+            md_dns_hostnames,
+            md_subnets,
+            md_internet_gateway,
+            md_attached_vpc,
+            md_nat_gateway,
+            md_availability_mode,
+            md_zonal,
+            md_regional,
+            md_ip_auto_scaling,
+            md_zone_auto_provisioning,
+            md_enabled,
+            md_disabled,
+            md_subnet,
+            md_connectivity_type,
+            md_public,
+            md_private,
+            md_elastic_ip_allocation_id,
+            md_route_tables,
+            md_destination,
+            md_target,
+            md_associated_subnets,
+            md_association,
+            md_network_diagram,
+            md_description,
+            md_inbound_rules,
+            md_outbound_rules,
+            md_protocol,
+            md_port_range,
+            md_source,
+            md_dns_name,
+            md_type,
+            md_ip_address_type,
+            md_port,
+            md_default_action,
+            md_basic_info,
+            md_ec2_instance,
+            md_instance_type,
+            md_platform,
+            md_architecture,
+            md_key_pair,
+            md_availability_zone,
+            md_availability_zones,
+            md_private_ip,
+            md_public_ip,
+            md_security_groups,
+            md_ebs_optimized,
+            md_monitoring,
+            md_iam_role,
+            md_iam_role_detail,
+            md_attached_policies,
+            md_inline_policies,
+            md_trust_policy,
+            md_policy_name,
+            md_launch_time,
+            md_storage,
+            md_device,
+            md_size,
+            md_encrypted,
+            md_delete_on_termination,
+            md_user_data,
+            md_ecr_repository,
+            md_tag_mutability,
+            md_encryption,
+            md_image_count,
+            md_created_at,
+            md_scheme,
+            md_target_type,
+            md_health_check,
+            md_threshold,
+            md_healthy,
+            md_unhealthy,
+            md_targets
+        );
+    }
+
+    #[test]
+    fn language_toggle_and_display_are_consistent() {
+        assert_eq!(Language::Korean.display(), "한국어");
+        assert_eq!(Language::Korean.toggle(), Language::English);
+        assert_eq!(Language::English.display(), "English");
+        assert_eq!(Language::English.toggle(), Language::Korean);
+    }
+
+    #[test]
+    fn i18n_labels_are_available_for_both_languages() {
+        let ko = I18n::new(Language::Korean);
+        let en = I18n::new(Language::English);
+
+        assert_all_labels_non_empty(&ko);
+        assert_all_labels_non_empty(&en);
+
+        assert!(ko.current_loading("작업").contains("작업"));
+        assert!(en.current_loading("task").contains("task"));
+    }
+}

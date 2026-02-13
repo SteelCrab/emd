@@ -138,4 +138,11 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.err().unwrap().to_string(), "Mock update failed");
     }
+
+    #[test]
+    fn update_status_accessors_return_values() {
+        let status = UpdateStatus::new(true, "9.9.9".to_string());
+        assert!(status.updated());
+        assert_eq!(status.version(), "9.9.9");
+    }
 }

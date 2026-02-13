@@ -155,3 +155,78 @@ pub fn save_blueprints(store: &BlueprintStore) -> Result<(), std::io::Error> {
     fs::write(&path, content)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Blueprint, BlueprintResource, BlueprintStore, ResourceType};
+
+    fn sample_resource(resource_type: ResourceType, suffix: &str) -> BlueprintResource {
+        BlueprintResource {
+            resource_type,
+            region: "ap-northeast-2".to_string(),
+            resource_id: format!("id-{}", suffix),
+            resource_name: format!("name-{}", suffix),
+        }
+    }
+
+    #[test]
+    fn resource_type_display_covers_all_variants() {
+        assert_eq!(ResourceType::Ec2.display(), "EC2");
+        assert_eq!(ResourceType::Network.display(), "Network");
+        assert_eq!(ResourceType::SecurityGroup.display(), "Security Group");
+        assert_eq!(ResourceType::LoadBalancer.display(), "Load Balancer");
+        assert_eq!(ResourceType::Ecr.display(), "ECR");
+        assert_eq!(ResourceType::Asg.display(), "Auto Scaling Group");
+    }
+
+    #[test]
+    fn blueprint_resource_display_contains_type_name_id_and_region() {
+        let resource = sample_resource(ResourceType::Ec2, "abc");
+        let text = resource.display();
+        assert!(text.contains("[EC2]"));
+        assert!(text.contains("name-abc"));
+        assert!(text.contains("id-abc"));
+        assert!(text.contains("ap-northeast-2"));
+    }
+
+    #[test]
+    fn blueprint_add_resource_deduplicates_same_id_and_region() {
+        let mut blueprint = Blueprint::new("bp".to_string());
+        let resource = sample_resource(ResourceType::Ec2, "dup");
+
+        blueprint.add_resource(resource.clone());
+        blueprint.add_resource(resource);
+
+        assert_eq!(blueprint.resources.len(), 1);
+    }
+
+    #[test]
+    fn blueprint_remove_resource_ignores_out_of_bounds() {
+        let mut blueprint = Blueprint::new("bp".to_string());
+        blueprint.add_resource(sample_resource(ResourceType::Ecr, "1"));
+        blueprint.remove_resource(99);
+        assert_eq!(blueprint.resources.len(), 1);
+    }
+
+    #[test]
+    fn blueprint_store_add_get_remove_works() {
+        let mut store = BlueprintStore::new();
+        store.add_blueprint(Blueprint::new("first".to_string()));
+        store.add_blueprint(Blueprint::new("second".to_string()));
+
+        assert_eq!(store.blueprints.len(), 2);
+        assert_eq!(store.get_blueprint(0).map(|b| b.name.as_str()), Some("first"));
+
+        if let Some(bp) = store.get_blueprint_mut(1) {
+            bp.name = "second-updated".to_string();
+        }
+        assert_eq!(
+            store.get_blueprint(1).map(|b| b.name.as_str()),
+            Some("second-updated")
+        );
+
+        store.remove_blueprint(0);
+        assert_eq!(store.blueprints.len(), 1);
+        assert_eq!(store.get_blueprint(0).map(|b| b.name.as_str()), Some("second-updated"));
+    }
+}

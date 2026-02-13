@@ -89,3 +89,21 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{App, run_app};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn run_app_returns_immediately_when_not_running() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).expect("create terminal");
+        let mut app = App::new();
+        app.running = false;
+
+        let result = run_app(&mut terminal, &mut app);
+        assert!(result.is_ok());
+    }
+}

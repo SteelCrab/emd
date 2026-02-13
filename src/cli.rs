@@ -28,3 +28,21 @@ pub fn run() -> Option<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Command};
+    use clap::Parser;
+
+    #[test]
+    fn parse_without_subcommand() {
+        let cli = Cli::parse_from(["emd"]);
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn parse_update_subcommand() {
+        let cli = Cli::parse_from(["emd", "update"]);
+        assert!(matches!(cli.command, Some(Command::Update)));
+    }
+}

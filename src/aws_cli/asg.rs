@@ -1,6 +1,4 @@
-use crate::aws_cli::common::{AwsResource, get_sdk_config};
-use aws_sdk_autoscaling::Client;
-// use tokio::runtime::Runtime;
+pub use crate::aws_cli::asg_sdk::{get_asg_detail, list_auto_scaling_groups};
 
 #[derive(Debug, Clone)]
 pub struct ScalingPolicy {
@@ -135,188 +133,102 @@ impl AsgDetail {
     }
 }
 
-use crate::aws_cli::common::get_runtime;
+#[cfg(test)]
+mod tests {
+    use super::{AsgDetail, ScalingPolicy};
 
-/// List all Auto Scaling Groups using AWS SDK
-pub fn list_auto_scaling_groups() -> Vec<AwsResource> {
-    get_runtime().block_on(list_auto_scaling_groups_async())
-}
-
-async fn list_auto_scaling_groups_async() -> Vec<AwsResource> {
-    let config = get_sdk_config().await;
-    let client = Client::new(&config);
-
-    let result = client.describe_auto_scaling_groups().send().await;
-
-    match result {
-        Ok(output) => output
-            .auto_scaling_groups()
-            .iter()
-            .map(|asg| {
-                let name = asg
-                    .auto_scaling_group_name()
-                    .unwrap_or_default()
-                    .to_string();
-                let arn = asg.auto_scaling_group_arn().unwrap_or_default().to_string();
-                let desired = asg.desired_capacity().unwrap_or(0);
-                let min = asg.min_size().unwrap_or(0);
-                let max = asg.max_size().unwrap_or(0);
-                AwsResource {
-                    name: name.clone(),
-                    id: name.clone(),
-                    state: format!("Desired: {} (Min: {}, Max: {})", desired, min, max),
-                    az: String::new(),
-                    cidr: arn,
-                }
-            })
-            .collect(),
-        Err(e) => {
-            tracing::error!("Error listing auto scaling groups: {:?}", e);
-            eprintln!("Error listing auto scaling groups: {:?}", e);
-            Vec::new()
+    fn sample_asg_detail() -> AsgDetail {
+        AsgDetail {
+            name: "asg-prod".to_string(),
+            arn: "arn:aws:autoscaling:ap-northeast-2:123456789012:autoScalingGroup:abcd:autoScalingGroupName/asg-prod".to_string(),
+            launch_template_name: Some("lt-web".to_string()),
+            launch_template_id: Some("lt-0123456789abcdef0".to_string()),
+            launch_config_name: None,
+            min_size: 1,
+            max_size: 4,
+            desired_capacity: 2,
+            default_cooldown: 300,
+            availability_zones: vec!["ap-northeast-2a".to_string(), "ap-northeast-2c".to_string()],
+            target_group_arns: vec![
+                "arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:targetgroup/web-blue/1111111111111111".to_string(),
+            ],
+            health_check_type: "EC2".to_string(),
+            health_check_grace_period: 120,
+            instances: vec!["i-aaa111".to_string(), "i-bbb222".to_string()],
+            created_time: "2026-02-13".to_string(),
+            scaling_policies: vec![ScalingPolicy {
+                name: "scale-out".to_string(),
+                policy_type: "SimpleScaling".to_string(),
+                adjustment_type: Some("ChangeInCapacity".to_string()),
+                scaling_adjustment: Some(1),
+                cooldown: Some(60),
+            }],
+            tags: vec![
+                ("Name".to_string(), "asg-prod".to_string()),
+                ("Env".to_string(), "prod".to_string()),
+            ],
         }
     }
-}
 
-/// Get Auto Scaling Group detail using AWS SDK
-pub fn get_asg_detail(asg_name: &str) -> Option<AsgDetail> {
-    get_runtime().block_on(get_asg_detail_async(asg_name))
-}
+    #[test]
+    fn scenario_asg_markdown_launch_template_render() {
+        let detail = sample_asg_detail();
+        let markdown = detail.to_markdown();
+        assert!(markdown.contains("| 시작 템플릿 | lt-web (`lt-0123456789abcdef0`) |"));
+    }
 
-async fn get_asg_detail_async(asg_name: &str) -> Option<AsgDetail> {
-    let config = get_sdk_config().await;
-    let client = Client::new(&config);
+    #[test]
+    fn scenario_asg_markdown_launch_config_fallback() {
+        let mut detail = sample_asg_detail();
+        detail.launch_template_name = None;
+        detail.launch_template_id = None;
+        detail.launch_config_name = Some("legacy-launch-config".to_string());
+        let markdown = detail.to_markdown();
+        assert!(markdown.contains("| 시작 구성 | legacy-launch-config |"));
+    }
 
-    // Get ASG details
-    let result = client
-        .describe_auto_scaling_groups()
-        .auto_scaling_group_names(asg_name)
-        .send()
-        .await
-        .ok()?;
+    #[test]
+    fn scenario_asg_markdown_instances_section_count() {
+        let detail = sample_asg_detail();
+        let markdown = detail.to_markdown();
+        assert!(markdown.contains("### 인스턴스 (2 개)"));
+    }
 
-    let asg = result.auto_scaling_groups().first()?;
+    #[test]
+    fn scenario_asg_markdown_target_group_name_extraction() {
+        let detail = sample_asg_detail();
+        let markdown = detail.to_markdown();
+        assert!(markdown.contains("- web-blue"));
+    }
 
-    let name = asg
-        .auto_scaling_group_name()
-        .unwrap_or_default()
-        .to_string();
-    let arn = asg.auto_scaling_group_arn().unwrap_or_default().to_string();
+    #[test]
+    fn scenario_asg_markdown_scaling_policy_table() {
+        let detail = sample_asg_detail();
+        let markdown = detail.to_markdown();
+        assert!(markdown.contains("| scale-out | SimpleScaling | ChangeInCapacity | 1 | 60초 |"));
+    }
 
-    // Launch Template
-    let (launch_template_name, launch_template_id) = if let Some(lt) = asg.launch_template() {
-        (
-            lt.launch_template_name().map(|s| s.to_string()),
-            lt.launch_template_id().map(|s| s.to_string()),
-        )
-    } else if let Some(mip) = asg.mixed_instances_policy() {
-        if let Some(lt_spec) = mip
-            .launch_template()
-            .and_then(|lt| lt.launch_template_specification())
-        {
-            (
-                lt_spec.launch_template_name().map(|s| s.to_string()),
-                lt_spec.launch_template_id().map(|s| s.to_string()),
-            )
-        } else {
-            (None, None)
-        }
-    } else {
-        (None, None)
-    };
+    #[test]
+    fn scenario_asg_markdown_tag_name_filtered() {
+        let detail = sample_asg_detail();
+        let markdown = detail.to_markdown();
+        assert!(markdown.contains("| Env | prod |"));
+        assert!(!markdown.contains("| Name | asg-prod |"));
+    }
 
-    let launch_config_name = asg.launch_configuration_name().map(|s| s.to_string());
+    #[test]
+    fn scenario_asg_markdown_without_optional_sections() {
+        let mut detail = sample_asg_detail();
+        detail.availability_zones.clear();
+        detail.target_group_arns.clear();
+        detail.instances.clear();
+        detail.scaling_policies.clear();
+        detail.tags.clear();
 
-    let min_size = asg.min_size();
-    let max_size = asg.max_size();
-    let desired_capacity = asg.desired_capacity();
-    let default_cooldown = asg.default_cooldown();
-    let health_check_type = asg.health_check_type().unwrap_or("EC2").to_string();
-    let health_check_grace_period = asg.health_check_grace_period().unwrap_or(0);
-
-    let created_time = asg
-        .created_time()
-        .map(|dt| {
-            dt.fmt(aws_sdk_autoscaling::primitives::DateTimeFormat::DateTime)
-                .unwrap_or_default()
-                .split('T')
-                .next()
-                .unwrap_or("")
-                .to_string()
-        })
-        .unwrap_or_default();
-
-    let availability_zones = asg
-        .availability_zones()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let target_group_arns = asg
-        .target_group_arns()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-
-    let instances: Vec<String> = asg
-        .instances()
-        .iter()
-        .filter_map(|i| i.instance_id().map(|s| s.to_string()))
-        .collect();
-
-    let tags: Vec<(String, String)> = asg
-        .tags()
-        .iter()
-        .map(|t| {
-            (
-                t.key().unwrap_or_default().to_string(),
-                t.value().unwrap_or_default().to_string(),
-            )
-        })
-        .collect();
-
-    // Get Scaling Policies
-    let scaling_policies = get_scaling_policies_async(&client, &name).await;
-
-    Some(AsgDetail {
-        name,
-        arn,
-        launch_template_name,
-        launch_template_id,
-        launch_config_name,
-        min_size: min_size.unwrap_or(0),
-        max_size: max_size.unwrap_or(0),
-        desired_capacity: desired_capacity.unwrap_or(0),
-        default_cooldown: default_cooldown.unwrap_or(300),
-        availability_zones,
-        target_group_arns,
-        health_check_type,
-        health_check_grace_period,
-        instances,
-        created_time,
-        scaling_policies,
-        tags,
-    })
-}
-
-async fn get_scaling_policies_async(client: &Client, asg_name: &str) -> Vec<ScalingPolicy> {
-    let result = client
-        .describe_policies()
-        .auto_scaling_group_name(asg_name)
-        .send()
-        .await;
-
-    match result {
-        Ok(output) => output
-            .scaling_policies()
-            .iter()
-            .map(|p| ScalingPolicy {
-                name: p.policy_name().unwrap_or_default().to_string(),
-                policy_type: p.policy_type().unwrap_or_default().to_string(),
-                adjustment_type: p.adjustment_type().map(|s| s.to_string()),
-                scaling_adjustment: p.scaling_adjustment(),
-                cooldown: p.cooldown(),
-            })
-            .collect(),
-        Err(_) => Vec::new(),
+        let markdown = detail.to_markdown();
+        assert!(!markdown.contains("### 가용 영역"));
+        assert!(!markdown.contains("### 대상 그룹"));
+        assert!(!markdown.contains("### 조정 정책"));
+        assert!(!markdown.contains("### 태그"));
     }
 }

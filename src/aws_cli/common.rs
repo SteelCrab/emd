@@ -983,12 +983,23 @@ async fn elbv2_describe_load_balancers(
     }
 
     let output = req.send().await.ok()?;
-    let load_balancers = output
+    let mut load_balancers = output
         .load_balancers()
         .iter()
         .map(lb_to_json)
         .collect::<Vec<_>>();
 
+    load_balancers.sort_by(|a, b| {
+        let a_name = a
+            .get("LoadBalancerName")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let b_name = b
+            .get("LoadBalancerName")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        a_name.cmp(b_name)
+    });
     value_to_json_string(json!({ "LoadBalancers": load_balancers }))
 }
 
@@ -1005,7 +1016,7 @@ async fn elbv2_describe_listeners(
         .await
         .ok()?;
 
-    let listeners = output
+    let mut listeners = output
         .listeners()
         .iter()
         .map(|listener| {
@@ -1028,6 +1039,11 @@ async fn elbv2_describe_listeners(
         })
         .collect::<Vec<_>>();
 
+    listeners.sort_by(|a, b| {
+        let a_port = a.get("Port").and_then(Value::as_i64).unwrap_or_default();
+        let b_port = b.get("Port").and_then(Value::as_i64).unwrap_or_default();
+        a_port.cmp(&b_port)
+    });
     value_to_json_string(json!({ "Listeners": listeners }))
 }
 
@@ -1063,12 +1079,23 @@ async fn elbv2_describe_target_groups(
 
     let output = req.send().await.ok()?;
 
-    let target_groups = output
+    let mut target_groups = output
         .target_groups()
         .iter()
         .map(target_group_to_json)
         .collect::<Vec<_>>();
 
+    target_groups.sort_by(|a, b| {
+        let a_name = a
+            .get("TargetGroupName")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let b_name = b
+            .get("TargetGroupName")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        a_name.cmp(b_name)
+    });
     value_to_json_string(json!({ "TargetGroups": target_groups }))
 }
 
@@ -1085,7 +1112,7 @@ async fn elbv2_describe_target_health(
         .await
         .ok()?;
 
-    let descriptions = output
+    let mut descriptions = output
         .target_health_descriptions()
         .iter()
         .map(|description| {
@@ -1106,6 +1133,19 @@ async fn elbv2_describe_target_health(
         })
         .collect::<Vec<_>>();
 
+    descriptions.sort_by(|a, b| {
+        let a_id = a
+            .get("Target")
+            .and_then(|v| v.get("Id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let b_id = b
+            .get("Target")
+            .and_then(|v| v.get("Id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        a_id.cmp(b_id)
+    });
     value_to_json_string(json!({ "TargetHealthDescriptions": descriptions }))
 }
 
@@ -1160,7 +1200,7 @@ async fn iam_list_attached_role_policies(
         .await
         .ok()?;
 
-    let attached_policies = output
+    let mut attached_policies = output
         .attached_policies()
         .iter()
         .map(|policy| {
@@ -1171,6 +1211,17 @@ async fn iam_list_attached_role_policies(
         })
         .collect::<Vec<_>>();
 
+    attached_policies.sort_by(|a, b| {
+        let a_name = a
+            .get("PolicyName")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let b_name = b
+            .get("PolicyName")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        a_name.cmp(b_name)
+    });
     value_to_json_string(json!({ "AttachedPolicies": attached_policies }))
 }
 
@@ -1184,12 +1235,13 @@ async fn iam_list_role_policies(client: &aws_sdk_iam::Client, args: &[&str]) -> 
         .await
         .ok()?;
 
-    let policy_names = output
+    let mut policy_names = output
         .policy_names()
         .iter()
         .map(std::string::ToString::to_string)
         .collect::<Vec<_>>();
 
+    policy_names.sort();
     value_to_json_string(json!({ "PolicyNames": policy_names }))
 }
 

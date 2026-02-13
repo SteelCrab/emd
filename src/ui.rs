@@ -1056,3 +1056,104 @@ fn draw_asg_select(frame: &mut Frame, app: &App, area: Rect) {
     let list = List::new(items).block(Block::default().title(title).borders(Borders::ALL));
     frame.render_widget(list, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::draw;
+    use crate::app::{App, LoadingTask, Screen};
+    use crate::aws_cli::AwsResource;
+    use crate::blueprint::{Blueprint, BlueprintResource, ResourceType};
+    use chrono::Utc;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn resource(id: &str, name: &str) -> AwsResource {
+        AwsResource {
+            name: name.to_string(),
+            id: id.to_string(),
+            state: "running".to_string(),
+            az: "ap-northeast-2a".to_string(),
+            cidr: "10.0.0.0/24".to_string(),
+        }
+    }
+
+    fn render_app(app: &App) {
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).expect("create test terminal");
+        terminal.draw(|frame| draw(frame, app)).expect("draw");
+    }
+
+    fn sample_blueprint() -> Blueprint {
+        Blueprint {
+            id: "bp-1".to_string(),
+            name: "bp-main".to_string(),
+            resources: vec![BlueprintResource {
+                resource_type: ResourceType::Ec2,
+                region: "ap-northeast-2".to_string(),
+                resource_id: "i-1234".to_string(),
+                resource_name: "web-1".to_string(),
+            }],
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn draw_renders_all_main_screens_without_panic() {
+        let mut app = App::new();
+        app.instances = vec![resource("i-1234", "web-1")];
+        app.vpcs = vec![resource("vpc-1234", "main-vpc")];
+        app.security_groups = vec![resource("sg-1234", "sg-web")];
+        app.load_balancers = vec![resource("lb-1234", "alb-main")];
+        app.ecr_repositories = vec![resource("repo-a", "repo-a")];
+        app.auto_scaling_groups = vec![resource("asg-a", "asg-a")];
+        app.preview_filename = "preview.md".to_string();
+        app.preview_content = "# hello\nworld\n".to_string();
+        app.current_blueprint = Some(sample_blueprint());
+        app.blueprint_store.blueprints = vec![sample_blueprint()];
+        app.input_buffer = "new-blueprint".to_string();
+
+        let screens = [
+            Screen::Login,
+            Screen::BlueprintSelect,
+            Screen::BlueprintDetail,
+            Screen::BlueprintNameInput,
+            Screen::BlueprintPreview,
+            Screen::RegionSelect,
+            Screen::ServiceSelect,
+            Screen::Ec2Select,
+            Screen::VpcSelect,
+            Screen::SecurityGroupSelect,
+            Screen::LoadBalancerSelect,
+            Screen::EcrSelect,
+            Screen::AsgSelect,
+            Screen::Preview,
+            Screen::Settings,
+        ];
+
+        for screen in screens {
+            app.screen = screen;
+            render_app(&app);
+        }
+    }
+
+    #[test]
+    fn draw_renders_loading_variants_without_panic() {
+        let mut app = App::new();
+        app.loading = true;
+        app.current_blueprint = Some(sample_blueprint());
+        app.blueprint_store.blueprints = vec![sample_blueprint()];
+        app.blueprint_markdown_parts = vec!["## sample".to_string()];
+
+        app.loading_task = LoadingTask::RefreshEc2;
+        render_app(&app);
+
+        app.loading_task = LoadingTask::LoadVpcDetail("vpc-1234".to_string(), 3);
+        app.loading_progress.vpc_info = true;
+        app.loading_progress.subnets = true;
+        render_app(&app);
+
+        app.loading_task = LoadingTask::LoadBlueprintResources(0);
+        render_app(&app);
+    }
+}

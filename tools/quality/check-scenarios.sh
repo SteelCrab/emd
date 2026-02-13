@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Description:
-#   Phase 2 scenario catalog validation script.
+#   Scenario catalog validation script.
 #   Rules:
 #   - total scenarios: >= 20
 #   - automated=yes scenarios: >= 17
 #   - every automated scenario must have a real test_ref function in src/
 set -euo pipefail
 
-CATALOG="${1:-phase2-test-scenarios.csv}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+CATALOG="${1:-${SCRIPT_DIR}/test-scenarios.csv}"
 MIN_TOTAL="${MIN_TOTAL:-20}"
 MIN_AUTOMATED="${MIN_AUTOMATED:-17}"
 
@@ -36,9 +38,9 @@ fi
 find_test_ref() {
   local test_ref="$1"
   if command -v rg >/dev/null 2>&1; then
-    rg -n "fn[[:space:]]+${test_ref}[[:space:]]*\\(" src >/dev/null
+    rg -n "fn[[:space:]]+${test_ref}[[:space:]]*\\(" "${PROJECT_ROOT}/src" >/dev/null
   else
-    grep -RsnE "fn[[:space:]]+${test_ref}[[:space:]]*\\(" src >/dev/null
+    grep -RsnE "fn[[:space:]]+${test_ref}[[:space:]]*\\(" "${PROJECT_ROOT}/src" >/dev/null
   fi
 }
 

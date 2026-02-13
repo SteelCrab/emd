@@ -1,11 +1,84 @@
 use crate::aws_cli::common::{
     AwsResource, Tag, extract_json_value, extract_tags, parse_name_tag, parse_resources_from_json,
-    run_aws_cli,
 };
-use crate::aws_cli::ec2::get_subnet_name;
 use crate::i18n::{I18n, Language};
 use serde::Deserialize;
 use std::collections::HashMap;
+
+#[cfg(not(test))]
+mod cli_adapter {
+    pub(super) fn run(args: &[&str]) -> Option<String> {
+        crate::aws_cli::common::run_aws_cli(args)
+    }
+}
+
+#[cfg(test)]
+mod cli_adapter {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    static RESPONSES: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+
+    fn key(args: &[&str]) -> String {
+        args.join("\x1f")
+    }
+
+    pub(super) fn run(args: &[&str]) -> Option<String> {
+        RESPONSES
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&key(args)).cloned().flatten())
+    }
+
+    pub(super) fn set(args: &[&str], output: Option<&str>) {
+        if let Ok(mut map) = RESPONSES.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+            map.insert(key(args), output.map(str::to_string));
+        }
+    }
+
+    pub(super) fn clear() {
+        if let Ok(mut map) = RESPONSES.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+            map.clear();
+        }
+    }
+}
+
+#[cfg(not(test))]
+mod subnet_adapter {
+    pub(super) fn get(subnet_id: &str) -> String {
+        crate::aws_cli::ec2::get_subnet_name(subnet_id)
+    }
+}
+
+#[cfg(test)]
+mod subnet_adapter {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    static RESPONSES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+    pub(super) fn get(subnet_id: &str) -> String {
+        RESPONSES
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .ok()
+            .and_then(|map| map.get(subnet_id).cloned())
+            .unwrap_or_else(|| subnet_id.to_string())
+    }
+
+    pub(super) fn set(subnet_id: &str, subnet_name: &str) {
+        if let Ok(mut map) = RESPONSES.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+            map.insert(subnet_id.to_string(), subnet_name.to_string());
+        }
+    }
+
+    pub(super) fn clear() {
+        if let Ok(mut map) = RESPONSES.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+            map.clear();
+        }
+    }
+}
 
 // Serde structures
 #[derive(Debug, Deserialize)]
@@ -503,7 +576,7 @@ impl NetworkDetail {
 
 // Public functions
 pub fn list_vpcs() -> Vec<AwsResource> {
-    let output = match run_aws_cli(&[
+    let output = match cli_adapter::run(&[
         "ec2",
         "describe-vpcs",
         "--query",
@@ -519,12 +592,16 @@ pub fn list_vpcs() -> Vec<AwsResource> {
 }
 
 pub fn list_subnets(vpc_id: &str) -> Vec<AwsResource> {
-    let output = match run_aws_cli(&["ec2", "describe-subnets", "--output", "json"]) {
+    let output = match cli_adapter::run(&["ec2", "describe-subnets", "--output", "json"]) {
         Some(o) => o,
         None => return Vec::new(),
     };
 
-    let response: SubnetResponse = match serde_json::from_str(&output) {
+    parse_subnets_output(&output, vpc_id)
+}
+
+fn parse_subnets_output(output: &str, vpc_id: &str) -> Vec<AwsResource> {
+    let response: SubnetResponse = match serde_json::from_str(output) {
         Ok(r) => r,
         Err(_) => return Vec::new(),
     };
@@ -554,7 +631,7 @@ pub fn list_subnets(vpc_id: &str) -> Vec<AwsResource> {
 
 pub fn list_internet_gateways(vpc_id: &str) -> Vec<AwsResource> {
     let filter = format!("Name=attachment.vpc-id,Values={}", vpc_id);
-    let output = match run_aws_cli(&[
+    let output = match cli_adapter::run(&[
         "ec2",
         "describe-internet-gateways",
         "--filters",
@@ -624,7 +701,7 @@ fn parse_internet_gateways(json: &str) -> Vec<AwsResource> {
 
 pub fn list_nat_gateways(vpc_id: &str) -> Vec<NatDetail> {
     let filter = format!("Name=vpc-id,Values={}", vpc_id);
-    let output = match run_aws_cli(&[
+    let output = match cli_adapter::run(&[
         "ec2",
         "describe-nat-gateways",
         "--filter",
@@ -636,7 +713,11 @@ pub fn list_nat_gateways(vpc_id: &str) -> Vec<NatDetail> {
         None => return Vec::new(),
     };
 
-    let response: NatGatewayResponse = match serde_json::from_str(&output) {
+    parse_nat_gateways_output(&output)
+}
+
+fn parse_nat_gateways_output(output: &str) -> Vec<NatDetail> {
+    let response: NatGatewayResponse = match serde_json::from_str(output) {
         Ok(r) => r,
         Err(_) => return Vec::new(),
     };
@@ -685,7 +766,7 @@ pub fn list_nat_gateways(vpc_id: &str) -> Vec<NatDetail> {
 
 pub fn list_route_tables(vpc_id: &str) -> Vec<RouteTableDetail> {
     let filter = format!("Name=vpc-id,Values={}", vpc_id);
-    let output = match run_aws_cli(&[
+    let output = match cli_adapter::run(&[
         "ec2",
         "describe-route-tables",
         "--filters",
@@ -816,7 +897,7 @@ fn extract_associations(json: &str) -> Vec<String> {
         let section = &json[block_start..obj_end];
         let subnet_id = extract_json_value(section, "SubnetId").unwrap_or_default();
 
-        let name = get_subnet_name(&subnet_id);
+        let name = subnet_adapter::get(&subnet_id);
         assocs.push(format!("{} ({})", name, subnet_id));
 
         search_start = obj_end;
@@ -825,7 +906,7 @@ fn extract_associations(json: &str) -> Vec<String> {
 }
 
 pub fn list_eips() -> Vec<EipDetail> {
-    let output = match run_aws_cli(&[
+    let output = match cli_adapter::run(&[
         "ec2",
         "describe-addresses",
         "--query",
@@ -837,7 +918,10 @@ pub fn list_eips() -> Vec<EipDetail> {
         None => return Vec::new(),
     };
 
-    let json = &output;
+    parse_eips_output(&output)
+}
+
+fn parse_eips_output(json: &str) -> Vec<EipDetail> {
     let mut details = Vec::new();
     let mut search_start = 0;
 
@@ -886,7 +970,7 @@ pub fn list_eips() -> Vec<EipDetail> {
 }
 
 pub fn get_network_detail(vpc_id: &str) -> Option<NetworkDetail> {
-    let output = run_aws_cli(&[
+    let output = cli_adapter::run(&[
         "ec2",
         "describe-vpcs",
         "--vpc-ids",
@@ -941,7 +1025,7 @@ fn extract_state(json: &str) -> String {
 }
 
 fn get_vpc_attribute(vpc_id: &str, attribute: &str) -> bool {
-    let output = run_aws_cli(&[
+    let output = cli_adapter::run(&[
         "ec2",
         "describe-vpc-attribute",
         "--vpc-id",
@@ -953,18 +1037,23 @@ fn get_vpc_attribute(vpc_id: &str, attribute: &str) -> bool {
     ]);
 
     if let Some(json) = output {
-        let key = if attribute == "enableDnsSupport" {
-            "EnableDnsSupport"
-        } else {
-            "EnableDnsHostnames"
-        };
-        if let Some(pos) = json.find(key) {
-            let section = &json[pos..];
-            if let Some(val_pos) = section.find("\"Value\": ") {
-                let val_start = val_pos + 9;
-                if section[val_start..].starts_with("true") {
-                    return true;
-                }
+        return parse_vpc_attribute_response(&json, attribute);
+    }
+    false
+}
+
+fn parse_vpc_attribute_response(json: &str, attribute: &str) -> bool {
+    let key = if attribute == "enableDnsSupport" {
+        "EnableDnsSupport"
+    } else {
+        "EnableDnsHostnames"
+    };
+    if let Some(pos) = json.find(key) {
+        let section = &json[pos..];
+        if let Some(val_pos) = section.find("\"Value\": ") {
+            let val_start = val_pos + 9;
+            if section[val_start..].starts_with("true") {
+                return true;
             }
         }
     }
@@ -972,9 +1061,10 @@ fn get_vpc_attribute(vpc_id: &str, attribute: &str) -> bool {
 }
 
 /// VPC 기본 정보만 조회 (name, cidr, state, tags)
-#[allow(clippy::type_complexity)]
-pub fn get_vpc_info(vpc_id: &str) -> Option<(String, String, String, Vec<(String, String)>)> {
-    let output = run_aws_cli(&[
+type VpcInfo = (String, String, String, Vec<(String, String)>);
+
+pub fn get_vpc_info(vpc_id: &str) -> Option<VpcInfo> {
+    let output = cli_adapter::run(&[
         "ec2",
         "describe-vpcs",
         "--vpc-ids",
@@ -983,7 +1073,10 @@ pub fn get_vpc_info(vpc_id: &str) -> Option<(String, String, String, Vec<(String
         "json",
     ])?;
 
-    let json = &output;
+    parse_vpc_info_output(&output, vpc_id)
+}
+
+fn parse_vpc_info_output(json: &str, vpc_id: &str) -> Option<VpcInfo> {
     let cidr = extract_json_value(json, "CidrBlock").unwrap_or_default();
     let state = extract_state(json);
     let tags = extract_tags(json);
@@ -1003,4 +1096,524 @@ pub fn get_vpc_dns_support(vpc_id: &str) -> bool {
 
 pub fn get_vpc_dns_hostnames(vpc_id: &str) -> bool {
     get_vpc_attribute(vpc_id, "enableDnsHostnames")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        EipDetail, NatDetail, NetworkDetail, RouteTableDetail, cli_adapter, extract_routes,
+        find_balanced_bracket_end, get_network_detail, list_eips, list_nat_gateways,
+        list_route_tables, list_subnets, list_vpcs, parse_eips_output, parse_internet_gateways,
+        parse_nat_gateways_output, parse_route_tables, parse_subnets_output,
+        parse_vpc_attribute_response, parse_vpc_info_output, subnet_adapter,
+    };
+    use crate::aws_cli::common::AwsResource;
+    use crate::i18n::Language;
+    use std::sync::{Mutex, OnceLock};
+
+    fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        match LOCK.get_or_init(|| Mutex::new(())).lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn sample_network_detail() -> NetworkDetail {
+        NetworkDetail {
+            name: "main-vpc".to_string(),
+            id: "vpc-1111aaaa".to_string(),
+            cidr: "10.0.0.0/16".to_string(),
+            state: "available".to_string(),
+            subnets: vec![AwsResource {
+                name: "public-a".to_string(),
+                id: "subnet-1111".to_string(),
+                state: "available".to_string(),
+                az: "ap-northeast-2a".to_string(),
+                cidr: "10.0.1.0/24".to_string(),
+            }],
+            igws: vec![AwsResource {
+                name: "igw-main".to_string(),
+                id: "igw-1234".to_string(),
+                state: "attached".to_string(),
+                az: String::new(),
+                cidr: String::new(),
+            }],
+            nats: vec![NatDetail {
+                name: "nat-main".to_string(),
+                id: "nat-1234".to_string(),
+                state: "available".to_string(),
+                connectivity_type: "public".to_string(),
+                availability_mode: "regional".to_string(),
+                auto_scaling_ips: "enabled".to_string(),
+                auto_provision_zones: "enabled".to_string(),
+                public_ip: "1.1.1.1".to_string(),
+                allocation_id: "eipalloc-1234".to_string(),
+                subnet_id: "subnet-1111".to_string(),
+                tags: vec![("Env".to_string(), "prod".to_string())],
+            }],
+            route_tables: vec![RouteTableDetail {
+                name: "rt-main".to_string(),
+                id: "rtb-1234".to_string(),
+                routes: vec!["0.0.0.0/0|igw-1234|active".to_string()],
+                associations: vec!["public-a (subnet-1111)".to_string()],
+            }],
+            eips: vec![EipDetail {
+                name: "eip-main".to_string(),
+                public_ip: "1.1.1.1".to_string(),
+                instance_id: "i-aaaa1111".to_string(),
+                private_ip: String::new(),
+            }],
+            dns_support: true,
+            dns_hostnames: true,
+            tags: vec![("Name".to_string(), "main-vpc".to_string())],
+        }
+    }
+
+    #[test]
+    fn parse_internet_gateways_extracts_id_name_and_state() {
+        let payload = r#"
+            [
+              ["igw-1234", [{"Key":"Name","Value":"igw-main"}], [{"VpcId":"vpc-1111","State":"available"}]],
+              ["igw-5678", [], []]
+            ]
+        "#;
+        let igws = parse_internet_gateways(payload);
+        assert_eq!(igws.len(), 2);
+        assert_eq!(igws[0].id, "igw-1234");
+        assert_eq!(igws[0].state, "attached");
+    }
+
+    #[test]
+    fn route_parsing_helpers_handle_nested_arrays() {
+        assert_eq!(find_balanced_bracket_end("[[]]"), Some(4));
+        assert_eq!(find_balanced_bracket_end("[[]"), None);
+
+        let routes = extract_routes(
+            r#"[{"DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-1234", "State": "active"}]"#,
+        );
+        assert_eq!(routes, vec!["0.0.0.0/0|igw-1234|active".to_string()]);
+    }
+
+    #[test]
+    fn parse_route_tables_extracts_table_id() {
+        let payload = r#"
+            [
+              ["rtb-1234", [{"Key":"Name","Value":"rt-main"}],
+                [{"DestinationCidrBlock":"0.0.0.0/0","GatewayId":"igw-1234","State":"active"}],
+                [{"SubnetId":"subnet-1111"}]
+              ]
+            ]
+        "#;
+        let tables = parse_route_tables(payload);
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].id, "rtb-1234");
+    }
+
+    #[test]
+    fn network_markdown_contains_sections_and_mermaid() {
+        let md = sample_network_detail().to_markdown(Language::English);
+        assert!(md.contains("## Network"));
+        assert!(md.contains("Internet Gateway"));
+        assert!(md.contains("NAT Gateway"));
+        assert!(md.contains("```mermaid"));
+    }
+
+    #[test]
+    fn parse_internet_gateways_marks_detached_when_attachment_is_missing() {
+        let payload = r#"
+            [
+              ["igw-1111", [{"Key":"Name","Value":"igw-a"}], []],
+              ["invalid-id", [], []]
+            ]
+        "#;
+        let igws = parse_internet_gateways(payload);
+        assert_eq!(igws.len(), 1);
+        assert_eq!(igws[0].id, "igw-1111");
+        assert_eq!(igws[0].state, "detached");
+    }
+
+    #[test]
+    fn extract_routes_uses_nat_or_local_when_gateway_is_missing() {
+        let routes = extract_routes(
+            r#"
+            [
+              {"DestinationCidrBlock": "0.0.0.0/0", "NatGatewayId": "nat-1111", "State": "active"},
+              {"DestinationCidrBlock": "10.0.0.0/16", "State": "active"}
+            ]
+            "#,
+        );
+        assert_eq!(routes[0], "0.0.0.0/0|nat-1111|active");
+        assert_eq!(routes[1], "10.0.0.0/16|local|active");
+    }
+
+    #[test]
+    fn parse_route_tables_supports_multiple_tables() {
+        let payload = r#"
+            [
+              ["rtb-1111", [{"Key":"Name","Value":"rt-a"}],
+                [{"DestinationCidrBlock":"0.0.0.0/0","GatewayId":"igw-1","State":"active"}],
+                [{"SubnetId":"subnet-1111"}]
+              ],
+              ["rtb-2222", [{"Key":"Name","Value":"rt-b"}],
+                [{"DestinationCidrBlock":"10.0.0.0/16","State":"active"}],
+                []
+              ]
+            ]
+        "#;
+        let tables = parse_route_tables(payload);
+        assert_eq!(tables.len(), 2);
+        assert_eq!(tables[0].id, "rtb-1111");
+        assert_eq!(tables[1].id, "rtb-2222");
+    }
+
+    #[test]
+    fn network_markdown_zonal_nat_path_renders_subnet_and_private_assoc() {
+        let detail = NetworkDetail {
+            name: "vpc-zonal".to_string(),
+            id: "vpc-zonal".to_string(),
+            cidr: "10.1.0.0/16".to_string(),
+            state: "available".to_string(),
+            subnets: vec![AwsResource {
+                name: "private-a".to_string(),
+                id: "subnet-z1".to_string(),
+                state: "available".to_string(),
+                az: "ap-northeast-2a".to_string(),
+                cidr: "10.1.1.0/24".to_string(),
+            }],
+            igws: vec![],
+            nats: vec![NatDetail {
+                name: "nat-zonal".to_string(),
+                id: "nat-z1".to_string(),
+                state: "available".to_string(),
+                connectivity_type: "private".to_string(),
+                availability_mode: String::new(),
+                auto_scaling_ips: String::new(),
+                auto_provision_zones: String::new(),
+                public_ip: String::new(),
+                allocation_id: String::new(),
+                subnet_id: "subnet-z1".to_string(),
+                tags: vec![],
+            }],
+            route_tables: vec![],
+            eips: vec![EipDetail {
+                name: "eip-private".to_string(),
+                public_ip: "52.0.0.9".to_string(),
+                instance_id: String::new(),
+                private_ip: "10.1.1.11".to_string(),
+            }],
+            dns_support: true,
+            dns_hostnames: false,
+            tags: vec![],
+        };
+
+        let md = detail.to_markdown(Language::English);
+        assert!(md.contains("NAT Gateway"));
+        assert!(md.contains("private-a - subnet-z1"));
+        assert!(md.contains("Private"));
+        assert!(md.contains("Private IP: 10.1.1.11"));
+    }
+
+    #[test]
+    fn subnet_nat_eip_and_vpc_attribute_parsers_handle_fixture_payloads() {
+        let subnets_payload = r#"
+        {
+          "Subnets": [
+            {
+              "SubnetId": "subnet-a",
+              "VpcId": "vpc-1",
+              "CidrBlock": "10.0.1.0/24",
+              "AvailabilityZone": "ap-northeast-2a",
+              "State": "available",
+              "MapPublicIpOnLaunch": true,
+              "AvailableIpAddressCount": 251,
+              "Tags": [{"Key":"Name","Value":"public-a"}]
+            },
+            {
+              "SubnetId": "subnet-b",
+              "VpcId": "vpc-2",
+              "CidrBlock": "10.1.1.0/24",
+              "AvailabilityZone": "ap-northeast-2b",
+              "State": "available",
+              "Tags": []
+            }
+          ]
+        }
+        "#;
+        let subnets = parse_subnets_output(subnets_payload, "vpc-1");
+        assert_eq!(subnets.len(), 1);
+        assert_eq!(subnets[0].id, "subnet-a");
+        assert_eq!(subnets[0].name, "public-a");
+
+        let nat_payload = r#"
+        {
+          "NatGateways": [
+            {
+              "NatGatewayId": "nat-1",
+              "SubnetId": "subnet-a",
+              "State": "available",
+              "ConnectivityType": "public",
+              "AvailabilityMode": "regional",
+              "AutoScalingIps": "enabled",
+              "AutoProvisionZones": "enabled",
+              "NatGatewayAddresses": [
+                {"AllocationId":"eipalloc-1","PublicIp":"3.3.3.3","PrivateIp":"10.0.1.10"}
+              ],
+              "Tags": [
+                {"Key":"Name","Value":"nat-main"},
+                {"Key":"Env","Value":"prod"}
+              ]
+            },
+            {
+              "NatGatewayId": "nat-del",
+              "State": "deleted",
+              "NatGatewayAddresses": [],
+              "Tags": []
+            }
+          ]
+        }
+        "#;
+        let nats = parse_nat_gateways_output(nat_payload);
+        assert_eq!(nats.len(), 1);
+        assert_eq!(nats[0].id, "nat-1");
+        assert_eq!(nats[0].allocation_id, "eipalloc-1");
+        assert_eq!(nats[0].tags[0], ("Env".to_string(), "prod".to_string()));
+
+        let eip_payload = r#"
+        [
+          {"AllocationId": "eipalloc-1", "PublicIp": "3.3.3.3", "InstanceId": "i-1", "PrivateIpAddress": "10.0.1.10", "Tags": [{"Key": "Name", "Value": "edge-eip"}]},
+          {"AllocationId": "eipalloc-2", "PublicIp": "3.3.3.4", "AssociationId": "eipassoc-2", "Tags": []}
+        ]
+        "#;
+        let eips = parse_eips_output(eip_payload);
+        assert_eq!(eips.len(), 2);
+        assert_eq!(eips[0].name, "edge-eip");
+        assert_eq!(eips[1].name, "3.3.3.4");
+
+        let attr_true = r#"{"EnableDnsSupport":{"Value": true}}"#;
+        let attr_false = r#"{"EnableDnsHostnames":{"Value": false}}"#;
+        assert!(parse_vpc_attribute_response(attr_true, "enableDnsSupport"));
+        assert!(!parse_vpc_attribute_response(attr_false, "enableDnsHostnames"));
+    }
+
+    #[test]
+    fn parse_vpc_info_output_prefers_name_tag_and_extracts_defaults() {
+        let payload = r#"
+        {
+          "Vpcs": [
+            {
+              "VpcId": "vpc-abc",
+              "CidrBlock": "10.2.0.0/16",
+              "State": "available",
+              "Tags":[
+                {"Key": "Name", "Value": "core-vpc"},
+                {"Key": "Env", "Value": "prod"}
+              ]
+            }
+          ]
+        }
+        "#;
+        let info = parse_vpc_info_output(payload, "vpc-abc").expect("vpc info");
+        assert_eq!(info.0, "core-vpc");
+        assert_eq!(info.1, "10.2.0.0/16");
+        assert_eq!(info.2, "available");
+        assert!(info.3.iter().any(|(k, v)| k == "Env" && v == "prod"));
+    }
+
+    #[test]
+    fn top_level_vpc_functions_use_mocked_cli_outputs() {
+        let _guard = test_lock();
+        cli_adapter::clear();
+        subnet_adapter::clear();
+
+        subnet_adapter::set("subnet-1111", "public-a");
+
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-vpcs",
+                "--query",
+                "Vpcs[*].[VpcId,Tags]",
+                "--output",
+                "json",
+            ],
+            Some(r#"[["vpc-1111",[{"Key": "Name", "Value": "main-vpc"}]]]"#),
+        );
+        cli_adapter::set(
+            &["ec2", "describe-subnets", "--output", "json"],
+            Some(
+                r#"
+                {
+                  "Subnets": [
+                    {
+                      "SubnetId": "subnet-1111",
+                      "VpcId": "vpc-1111",
+                      "CidrBlock": "10.0.1.0/24",
+                      "AvailabilityZone": "ap-northeast-2a",
+                      "State": "available",
+                      "Tags": [{"Key":"Name","Value":"public-a"}]
+                    }
+                  ]
+                }
+                "#,
+            ),
+        );
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-internet-gateways",
+                "--filters",
+                "Name=attachment.vpc-id,Values=vpc-1111",
+                "--query",
+                "InternetGateways[*].[InternetGatewayId,Tags,Attachments]",
+                "--output",
+                "json",
+            ],
+            Some(
+                r#"
+                [
+                  ["igw-1234", [{"Key": "Name", "Value": "igw-main"}], [{"VpcId": "vpc-1111", "State": "available"}]]
+                ]
+                "#,
+            ),
+        );
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-nat-gateways",
+                "--filter",
+                "Name=vpc-id,Values=vpc-1111",
+                "--output",
+                "json",
+            ],
+            Some(
+                r#"
+                {
+                  "NatGateways": [
+                    {
+                      "NatGatewayId": "nat-1234",
+                      "SubnetId": "subnet-1111",
+                      "State": "available",
+                      "ConnectivityType": "public",
+                      "NatGatewayAddresses": [{"AllocationId": "eipalloc-1234", "PublicIp": "52.0.0.1"}],
+                      "Tags": [{"Key": "Name", "Value": "nat-main"}]
+                    }
+                  ]
+                }
+                "#,
+            ),
+        );
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-route-tables",
+                "--filters",
+                "Name=vpc-id,Values=vpc-1111",
+                "--query",
+                "RouteTables[*].[RouteTableId,Tags,Routes,Associations]",
+                "--output",
+                "json",
+            ],
+            Some(
+                r#"
+                [
+                  [
+                    "rtb-1234",
+                    [{"Key": "Name", "Value": "rt-main"}],
+                    [{"DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-1234", "State": "active"}],
+                    [{"SubnetId": "subnet-1111"}]
+                  ]
+                ]
+                "#,
+            ),
+        );
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-addresses",
+                "--query",
+                "Addresses[*].{AllocationId:AllocationId, PublicIp:PublicIp, AssociationId:AssociationId, InstanceId:InstanceId, PrivateIpAddress:PrivateIpAddress, Tags:Tags}",
+                "--output",
+                "json",
+            ],
+            Some(
+                r#"
+                [
+                  {"AllocationId": "eipalloc-1234", "PublicIp": "52.0.0.1", "InstanceId": "i-1234", "Tags": [{"Key": "Name", "Value": "edge-eip"}]}
+                ]
+                "#,
+            ),
+        );
+
+        cli_adapter::set(
+            &["ec2", "describe-vpcs", "--vpc-ids", "vpc-1111", "--output", "json"],
+            Some(
+                r#"
+                {
+                  "Vpcs": [
+                    {
+                      "VpcId": "vpc-1111",
+                      "CidrBlock": "10.0.0.0/16",
+                      "State": "available",
+                      "Tags": [{"Key": "Name", "Value": "main-vpc"}]
+                    }
+                  ]
+                }
+                "#,
+            ),
+        );
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-vpc-attribute",
+                "--vpc-id",
+                "vpc-1111",
+                "--attribute",
+                "enableDnsSupport",
+                "--output",
+                "json",
+            ],
+            Some(r#"{"EnableDnsSupport":{"Value": true}}"#),
+        );
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-vpc-attribute",
+                "--vpc-id",
+                "vpc-1111",
+                "--attribute",
+                "enableDnsHostnames",
+                "--output",
+                "json",
+            ],
+            Some(r#"{"EnableDnsHostnames":{"Value": true}}"#),
+        );
+
+        let vpcs = list_vpcs();
+        assert_eq!(vpcs.len(), 1);
+        assert_eq!(vpcs[0].id, "vpc-1111");
+
+        let subnets = list_subnets("vpc-1111");
+        assert_eq!(subnets.len(), 1);
+        assert_eq!(subnets[0].name, "public-a");
+
+        let nats = list_nat_gateways("vpc-1111");
+        assert_eq!(nats.len(), 1);
+        assert_eq!(nats[0].id, "nat-1234");
+
+        let routes = list_route_tables("vpc-1111");
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].id, "rtb-1234");
+        assert_eq!(routes[0].associations[0], "public-a (subnet-1111)");
+
+        let eips = list_eips();
+        assert_eq!(eips.len(), 1);
+        assert_eq!(eips[0].name, "edge-eip");
+
+        let detail = get_network_detail("vpc-1111").expect("network detail");
+        assert_eq!(detail.id, "vpc-1111");
+        assert_eq!(detail.name, "main-vpc");
+        assert!(detail.dns_support);
+        assert!(detail.dns_hostnames);
+    }
 }

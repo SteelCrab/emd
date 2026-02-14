@@ -4,20 +4,35 @@
 
 ### ✨ Features
 
-- Added large-scale quality gate with scenario validation integrated into `tools/rust-coverage.sh`
-- Added Codecov upload configuration for automated coverage reporting
+- Added AWS SDK-first execution path for CLI handlers, with ASG/ECR detail support and improved offline testability
+- Added offline integration-style test coverage for core app flows and parser scenarios
+- Added release quality tooling:
+  - Large-scale scenario gate
+  - 85% line-coverage gate using `cargo llvm-cov`
+  - GitHub Codecov integration
 
 ### 🔧 Improvements
 
-- Unified coverage pipeline by removing redundant scenario-check script and simplifying `tools` execution flow
-- Updated CI coverage artifact path to match `cargo llvm-cov` output (`target/llvm-cov-target/lcov.info`)
-- Added coverage threshold guidance and documentation updates in `tools/README.md` / `tools/README_KR.md`
-- Added roadmap references in README and introduced `ROADMAP.md` / `ROADMAP_KR.md` as process documentation
+- Reworked AWS data handling for robustness:
+  - Normalized EC2 output mapping and IAM policy document parsing
+  - Added typed authentication error model for clearer i18n-based UI login messages
+- Added tracing/logging foundation and startup diagnostics (`tracing` + file-backed logs)
+- Strengthened code quality process with:
+  - `pre-commit` hooks (`cargo fmt`, `clippy`, `test`)
+  - quality script simplification (`check-scenarios` merged into `rust-coverage.sh`)
+  - CI workflow updates for coverage artifact path and script entrypoints
+- Expanded release/process documentation:
+  - `ROADMAP.md`, `ROADMAP_KR.md`
+  - `README` roadmap links
+  - quality tooling docs updates (`tools/README.md`, `tools/README_KR.md`)
 
 ### 🐛 Fixes
 
-- Normalized scenario/coverage tooling behavior to avoid stale references to removed scripts
-- Ensured quality gate documentation and workflow align with actual executable set
+- Normalized scenario reference validation and CLI argument parsing edge-cases
+- Fixed stale/incorrect coverage and quality-gate behavior after refactors and merges
+- Cleaned duplicate/unused code paths and restored resource detail loading flows
+- Hardened IAM/auth-related and AWS output decoding paths to reduce runtime parse failures
+- Removed outdated dead paths and improved error visibility without changing user-facing behavior
 
 ---
 

@@ -145,13 +145,6 @@ impl I18n {
         }
     }
 
-    pub fn retry(&self) -> &'static str {
-        match self.lang {
-            Language::Korean => "재시도",
-            Language::English => "Retry",
-        }
-    }
-
     pub fn single_mode(&self) -> &'static str {
         match self.lang {
             Language::Korean => "단일 모드",
@@ -192,6 +185,31 @@ impl I18n {
         match self.lang {
             Language::Korean => "서비스",
             Language::English => "Service",
+        }
+    }
+
+    pub fn ec2(&self) -> &'static str {
+        "EC2"
+    }
+
+    pub fn network(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "Network",
+            Language::English => "Network",
+        }
+    }
+
+    pub fn security_group(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "Security Group",
+            Language::English => "Security Group",
+        }
+    }
+
+    pub fn load_balancer(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "Load Balancer",
+            Language::English => "Load Balancer",
         }
     }
 
@@ -344,6 +362,69 @@ impl I18n {
         }
     }
 
+    pub fn aws_login_retry_hint(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "자격 증명을 확인하고 다시 시도하세요.",
+            Language::English => "Check your credentials and try again.",
+        }
+    }
+
+    pub fn profile_select_prompt(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "프로파일을 선택하세요:",
+            Language::English => "Select AWS profile:",
+        }
+    }
+
+    pub fn profile_not_found(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "사용 가능한 AWS 프로파일이 없습니다.",
+            Language::English => "No AWS profiles are available.",
+        }
+    }
+
+    pub fn profile_refresh_hint(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "aws configure 또는 aws sso login 실행 후 r 로 새로고침하세요.",
+            Language::English => "Run aws configure or aws sso login, then press r to refresh.",
+        }
+    }
+
+    pub fn auth_provider_missing(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "AWS 로그인 필요: 자격 증명 공급자를 찾을 수 없습니다.",
+            Language::English => "AWS login required: credential provider not found.",
+        }
+    }
+
+    pub fn auth_credentials_load_failed(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "AWS 로그인 필요: 자격 증명 로드에 실패했습니다.",
+            Language::English => "AWS login required: failed to load credentials.",
+        }
+    }
+
+    pub fn auth_caller_identity_failed(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "AWS 로그인 필요: 호출자 정보 조회에 실패했습니다.",
+            Language::English => "AWS login required: failed to fetch caller identity.",
+        }
+    }
+
+    pub fn auth_network_error(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "AWS 자격 증명 확인 실패: 네트워크 연결을 확인하세요.",
+            Language::English => "AWS credential check failed: please verify network connectivity.",
+        }
+    }
+
+    pub fn auth_unknown_error(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "AWS 자격 증명 확인 실패: 알 수 없는 오류가 발생했습니다.",
+            Language::English => "AWS credential check failed: unknown error occurred.",
+        }
+    }
+
     // Loading tasks
     pub fn processing(&self) -> &'static str {
         match self.lang {
@@ -485,7 +566,164 @@ impl I18n {
     }
 
     pub fn auto_scaling_group(&self) -> &'static str {
-        "Auto Scaling Group"
+        match self.lang {
+            Language::Korean => "Auto Scaling Group",
+            Language::English => "Auto Scaling Group",
+        }
+    }
+
+    pub fn asg_launch_template(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "시작 템플릿",
+            Language::English => "Launch Template",
+        }
+    }
+
+    pub fn asg_launch_configuration(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "시작 구성",
+            Language::English => "Launch Configuration",
+        }
+    }
+
+    pub fn asg_min_size(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "최소 크기",
+            Language::English => "Min Size",
+        }
+    }
+
+    pub fn asg_max_size(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "최대 크기",
+            Language::English => "Max Size",
+        }
+    }
+
+    pub fn asg_desired_capacity(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "원하는 용량",
+            Language::English => "Desired Capacity",
+        }
+    }
+
+    pub fn asg_default_cooldown(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "기본 쿨다운",
+            Language::English => "Default Cooldown",
+        }
+    }
+
+    pub fn asg_health_check_type(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "헬스 체크 유형",
+            Language::English => "Health Check Type",
+        }
+    }
+
+    pub fn asg_health_check_grace_period(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "헬스 체크 유예 기간",
+            Language::English => "Health Check Grace Period",
+        }
+    }
+
+    pub fn asg_created_at(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "생성일",
+            Language::English => "Created At",
+        }
+    }
+
+    pub fn asg_availability_zones(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "가용 영역",
+            Language::English => "Availability Zones",
+        }
+    }
+
+    pub fn asg_instances(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "인스턴스",
+            Language::English => "Instances",
+        }
+    }
+
+    pub fn asg_instance_id(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "인스턴스 ID",
+            Language::English => "Instance ID",
+        }
+    }
+
+    pub fn asg_target_groups(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "대상 그룹",
+            Language::English => "Target Groups",
+        }
+    }
+
+    pub fn asg_scaling_policies(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "조정 정책",
+            Language::English => "Scaling Policies",
+        }
+    }
+
+    pub fn asg_policy_type(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "유형",
+            Language::English => "Type",
+        }
+    }
+
+    pub fn asg_adjustment_type(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "조정 유형",
+            Language::English => "Adjustment Type",
+        }
+    }
+
+    pub fn asg_adjustment_value(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "조정 값",
+            Language::English => "Adjustment Value",
+        }
+    }
+
+    pub fn asg_cooldown(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "쿨다운",
+            Language::English => "Cooldown",
+        }
+    }
+
+    pub fn asg_tags(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "태그",
+            Language::English => "Tags",
+        }
+    }
+
+    pub fn asg_key(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "키",
+            Language::English => "Key",
+        }
+    }
+
+    pub fn asg_seconds(&self, value: i32) -> String {
+        match self.lang {
+            Language::Korean => format!("{value}초"),
+            Language::English => format!("{value}s"),
+        }
+    }
+
+    pub fn asg_instances_with_count(&self, count: usize) -> String {
+        match self.lang {
+            Language::Korean => format!("{} ({} 개)", self.asg_instances(), count),
+            Language::English => format!("{} ({count})", self.asg_instances()),
+        }
     }
 
     pub fn loading_blueprint_resources(&self) -> &'static str {
@@ -618,6 +856,13 @@ impl I18n {
         }
     }
 
+    pub fn blueprint_save_failed(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "블루프린터 저장 실패",
+            Language::English => "Blueprint save failed",
+        }
+    }
+
     pub fn change(&self) -> &'static str {
         match self.lang {
             Language::Korean => "변경",
@@ -674,6 +919,23 @@ impl I18n {
         match self.lang {
             Language::Korean => "조회 실패",
             Language::English => "Query failed",
+        }
+    }
+
+    pub fn network_detail_unavailable(&self, vpc_id: &str) -> String {
+        match self.lang {
+            Language::Korean => {
+                format!(
+                    "{} 네트워크 상세 정보를 불러올 수 없습니다. 로그인 상태를 확인하세요.",
+                    vpc_id
+                )
+            }
+            Language::English => {
+                format!(
+                    "Network detail unavailable for {}. Please check AWS login status.",
+                    vpc_id
+                )
+            }
         }
     }
 
@@ -1123,6 +1385,13 @@ impl I18n {
         }
     }
 
+    pub fn md_uri(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "URI",
+            Language::English => "URI",
+        }
+    }
+
     pub fn md_encryption(&self) -> &'static str {
         match self.lang {
             Language::Korean => "암호화",
@@ -1141,6 +1410,20 @@ impl I18n {
         match self.lang {
             Language::Korean => "생성일",
             Language::English => "Created At",
+        }
+    }
+
+    pub fn ecr_encryption_kms(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "AWS KMS",
+            Language::English => "AWS KMS",
+        }
+    }
+
+    pub fn ecr_encryption_aes256(&self) -> &'static str {
+        match self.lang {
+            Language::Korean => "AES-256",
+            Language::English => "AES-256",
         }
     }
 
@@ -1192,5 +1475,260 @@ impl I18n {
             Language::Korean => "대상:",
             Language::English => "Targets:",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{I18n, Language};
+
+    macro_rules! assert_non_empty {
+        ($i:ident, $($method:ident),+ $(,)?) => {
+            $(
+                assert!(
+                    !$i.$method().is_empty(),
+                    "{} should not be empty",
+                    stringify!($method)
+                );
+            )+
+        };
+        ($value:expr) => {
+            assert!(
+                !$value.is_empty(),
+                "{} should not be empty",
+                stringify!($value)
+            );
+        };
+    }
+
+    fn assert_all_labels_non_empty(i: &I18n) {
+        assert_non_empty!(i,
+            exit,
+            settings,
+            main_tab,
+            back,
+            select,
+            move_cursor,
+            refresh,
+            save,
+            delete,
+            add,
+            cancel,
+            confirm,
+            scroll,
+            page,
+            generate,
+            reorder,
+            single_mode,
+            add_to_blueprint,
+            markdown_generate,
+            login,
+            region,
+            service,
+            blueprint,
+            preview,
+            loading,
+            loading_msg,
+            aws_cli_waiting,
+            refresh_complete,
+            save_complete,
+            resource_added,
+            resource_deleted,
+            blueprint_saved,
+            blueprint_deleted,
+            no_resources,
+            no_instances,
+            no_vpcs,
+            no_security_groups,
+            no_load_balancers,
+            no_ecr_repos,
+            aws_login_verified,
+            aws_login_required,
+            aws_login_checking,
+            aws_configure_hint,
+            processing,
+            refreshing_ec2_list,
+            refreshing_vpc_list,
+            refreshing_sg_list,
+            refreshing_preview,
+            loading_ec2_list,
+            loading_vpc_list,
+            loading_sg_list,
+            loading_ec2_detail,
+            loading_vpc_detail,
+            loading_sg_detail,
+            refreshing_lb_list,
+            loading_lb_list,
+            loading_lb_detail,
+            refreshing_ecr_list,
+            loading_ecr_list,
+            loading_ecr_detail,
+            loading_asg_list,
+            loading_asg_detail,
+            no_asgs,
+            auto_scaling_group,
+            loading_blueprint_resources,
+            ec2,
+            network,
+            security_group,
+            load_balancer,
+            vpc_basic_info,
+            aws_login_retry_hint,
+            profile_select_prompt,
+            profile_not_found,
+            profile_refresh_hint,
+            auth_provider_missing,
+            auth_credentials_load_failed,
+            auth_caller_identity_failed,
+            auth_network_error,
+            auth_unknown_error,
+            blueprint_save_failed,
+            md_uri,
+            ecr_encryption_kms,
+            ecr_encryption_aes256,
+            asg_launch_template,
+            asg_launch_configuration,
+            asg_min_size,
+            asg_max_size,
+            asg_desired_capacity,
+            asg_default_cooldown,
+            asg_health_check_type,
+            asg_health_check_grace_period,
+            asg_created_at,
+            asg_availability_zones,
+            asg_instances,
+            asg_instance_id,
+            asg_target_groups,
+            asg_scaling_policies,
+            asg_policy_type,
+            asg_adjustment_type,
+            asg_adjustment_value,
+            asg_cooldown,
+            asg_tags,
+            asg_key,
+            subnets,
+            internet_gateway,
+            nat_gateway,
+            route_tables,
+            elastic_ip,
+            dns_settings,
+            completing,
+            new_blueprint,
+            blueprint_load_failed,
+            enter_blueprint_name,
+            press_a_to_add,
+            resources,
+            language,
+            language_setting,
+            settings_saved,
+            change,
+            item,
+            value,
+            md_name,
+            md_state,
+            tag,
+            toc,
+            query_failed,
+            md_dns_support,
+            md_dns_hostnames,
+            md_subnets,
+            md_internet_gateway,
+            md_attached_vpc,
+            md_nat_gateway,
+            md_availability_mode,
+            md_zonal,
+            md_regional,
+            md_ip_auto_scaling,
+            md_zone_auto_provisioning,
+            md_enabled,
+            md_disabled,
+            md_subnet,
+            md_connectivity_type,
+            md_public,
+            md_private,
+            md_elastic_ip_allocation_id,
+            md_route_tables,
+            md_destination,
+            md_target,
+            md_associated_subnets,
+            md_association,
+            md_network_diagram,
+            md_description,
+            md_inbound_rules,
+            md_outbound_rules,
+            md_protocol,
+            md_port_range,
+            md_source,
+            md_dns_name,
+            md_type,
+            md_ip_address_type,
+            md_port,
+            md_default_action,
+            md_basic_info,
+            md_ec2_instance,
+            md_instance_type,
+            md_platform,
+            md_architecture,
+            md_key_pair,
+            md_availability_zone,
+            md_availability_zones,
+            md_private_ip,
+            md_public_ip,
+            md_security_groups,
+            md_ebs_optimized,
+            md_monitoring,
+            md_iam_role,
+            md_iam_role_detail,
+            md_attached_policies,
+            md_inline_policies,
+            md_trust_policy,
+            md_policy_name,
+            md_launch_time,
+            md_storage,
+            md_device,
+            md_size,
+            md_encrypted,
+            md_delete_on_termination,
+            md_user_data,
+            md_ecr_repository,
+            md_tag_mutability,
+            md_encryption,
+            md_image_count,
+            md_created_at,
+            md_scheme,
+            md_target_type,
+            md_health_check,
+            md_threshold,
+            md_healthy,
+            md_unhealthy,
+            md_targets
+        );
+    }
+
+    #[test]
+    fn language_toggle_and_display_are_consistent() {
+        assert_eq!(Language::Korean.display(), "한국어");
+        assert_eq!(Language::Korean.toggle(), Language::English);
+        assert_eq!(Language::English.display(), "English");
+        assert_eq!(Language::English.toggle(), Language::Korean);
+    }
+
+    #[test]
+    fn i18n_labels_are_available_for_both_languages() {
+        let ko = I18n::new(Language::Korean);
+        let en = I18n::new(Language::English);
+
+        assert_all_labels_non_empty(&ko);
+        assert_all_labels_non_empty(&en);
+
+        assert!(ko.current_loading("작업").contains("작업"));
+        assert!(en.current_loading("task").contains("task"));
+
+        assert_non_empty!(ko.asg_seconds(10));
+        assert_non_empty!(ko.asg_instances_with_count(3));
+        assert_non_empty!(ko.network_detail_unavailable("vpc-1234"));
+        assert_non_empty!(en.asg_seconds(10));
+        assert_non_empty!(en.asg_instances_with_count(3));
+        assert_non_empty!(en.network_detail_unavailable("vpc-1234"));
     }
 }

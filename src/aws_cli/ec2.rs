@@ -1,10 +1,85 @@
-use crate::aws_cli::common::{
-    AwsResource, extract_json_value, extract_tags, parse_name_tag, run_aws_cli,
-};
-use crate::aws_cli::iam::{IamRoleDetail, get_iam_role_detail};
+use crate::aws_cli::common::{AwsResource, extract_json_value, extract_tags, parse_name_tag};
+use crate::aws_cli::iam::IamRoleDetail;
 use crate::i18n::{I18n, Language};
 use base64::{Engine as _, engine::general_purpose};
 use serde::Deserialize;
+
+#[cfg(not(test))]
+mod cli_adapter {
+    pub(super) fn run(args: &[&str]) -> Option<String> {
+        crate::aws_cli::common::run_aws_cli(args)
+    }
+}
+
+#[cfg(test)]
+mod cli_adapter {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    static RESPONSES: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+
+    fn key(args: &[&str]) -> String {
+        args.join("\x1f")
+    }
+
+    pub(super) fn run(args: &[&str]) -> Option<String> {
+        RESPONSES
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&key(args)).cloned().flatten())
+    }
+
+    pub(super) fn set(args: &[&str], output: Option<&str>) {
+        if let Ok(mut map) = RESPONSES.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+            map.insert(key(args), output.map(str::to_string));
+        }
+    }
+
+    pub(super) fn clear() {
+        if let Ok(mut map) = RESPONSES.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+            map.clear();
+        }
+    }
+}
+
+#[cfg(not(test))]
+mod iam_adapter {
+    use crate::aws_cli::iam::{IamRoleDetail, get_iam_role_detail};
+
+    pub(super) fn get(role_name: &str) -> Option<IamRoleDetail> {
+        get_iam_role_detail(role_name)
+    }
+}
+
+#[cfg(test)]
+mod iam_adapter {
+    use crate::aws_cli::iam::IamRoleDetail;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    static RESPONSES: OnceLock<Mutex<HashMap<String, Option<IamRoleDetail>>>> = OnceLock::new();
+
+    pub(super) fn get(role_name: &str) -> Option<IamRoleDetail> {
+        RESPONSES
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .ok()
+            .and_then(|map| map.get(role_name).cloned().flatten())
+    }
+
+    pub(super) fn set(role_name: &str, detail: Option<IamRoleDetail>) {
+        if let Ok(mut map) = RESPONSES.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+            map.insert(role_name.to_string(), detail);
+        }
+    }
+
+    pub(super) fn clear() {
+        if let Ok(mut map) = RESPONSES.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+            map.clear();
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct VolumeDetail {
@@ -216,7 +291,7 @@ impl Ec2Detail {
 }
 
 pub fn list_instances() -> Vec<AwsResource> {
-    let output = match run_aws_cli(&[
+    let output = match cli_adapter::run(&[
         "ec2",
         "describe-instances",
         "--query",
@@ -295,7 +370,7 @@ fn extract_state(json: &str) -> String {
 }
 
 pub fn get_instance_detail(instance_id: &str) -> Option<Ec2Detail> {
-    let output = run_aws_cli(&[
+    let output = cli_adapter::run(&[
         "ec2",
         "describe-instances",
         "--instance-ids",
@@ -304,75 +379,79 @@ pub fn get_instance_detail(instance_id: &str) -> Option<Ec2Detail> {
         "json",
     ])?;
 
-    let json = &output;
-
-    let instance_type = extract_json_value(json, "InstanceType").unwrap_or_default();
-    let ami_id = extract_json_value(json, "ImageId").unwrap_or_default();
+    let ami_id = extract_json_value(&output, "ImageId").unwrap_or_default();
     let ami = if !ami_id.is_empty() {
         get_ami_name(&ami_id)
     } else {
         String::new()
     };
 
-    // Platform (Linux if not specified, Windows otherwise)
-    let platform = extract_json_value(json, "Platform").unwrap_or_else(|| "Linux".to_string());
-    let architecture =
-        extract_json_value(json, "Architecture").unwrap_or_else(|| "x86_64".to_string());
-
-    let key_pair = extract_json_value(json, "KeyName").unwrap_or_else(|| "-".to_string());
-    let vpc_id = extract_json_value(json, "VpcId").unwrap_or_default();
+    let vpc_id = extract_json_value(&output, "VpcId").unwrap_or_default();
     let vpc = if !vpc_id.is_empty() {
         get_vpc_name(&vpc_id)
     } else {
         String::new()
     };
 
-    let subnet_id = extract_json_value(json, "SubnetId").unwrap_or_default();
+    let subnet_id = extract_json_value(&output, "SubnetId").unwrap_or_default();
     let subnet = if !subnet_id.is_empty() {
         get_subnet_name(&subnet_id)
     } else {
         String::new()
     };
+    let volumes = get_instance_volumes(instance_id);
+    let user_data = get_instance_user_data(instance_id);
 
+    Some(parse_instance_detail_output(
+        instance_id,
+        &output,
+        ami,
+        vpc,
+        subnet,
+        volumes,
+        user_data,
+    ))
+}
+
+fn parse_instance_detail_output(
+    instance_id: &str,
+    json: &str,
+    ami: String,
+    vpc: String,
+    subnet: String,
+    volumes: Vec<VolumeDetail>,
+    user_data: Option<String>,
+) -> Ec2Detail {
+    let instance_type = extract_json_value(json, "InstanceType").unwrap_or_default();
+    let platform = extract_json_value(json, "Platform").unwrap_or_else(|| "Linux".to_string());
+    let architecture =
+        extract_json_value(json, "Architecture").unwrap_or_else(|| "x86_64".to_string());
+    let key_pair = extract_json_value(json, "KeyName").unwrap_or_else(|| "-".to_string());
     let az = extract_json_value(json, "AvailabilityZone").unwrap_or_default();
     let public_ip = extract_json_value(json, "PublicIpAddress").unwrap_or_else(|| "-".to_string());
     let private_ip = extract_json_value(json, "PrivateIpAddress").unwrap_or_default();
     let state = extract_state(json);
-
-    // EBS Optimized
     let ebs_optimized = json.contains("\"EbsOptimized\": true");
-
-    // Monitoring
     let monitoring = if json.contains("\"State\": \"enabled\"") {
         "Enabled".to_string()
     } else {
         "Disabled".to_string()
     };
-
-    // IAM Role (from IamInstanceProfile)
     let iam_role = extract_json_value(json, "Arn")
         .and_then(|arn| arn.split('/').next_back().map(|s| s.to_string()));
-
-    // IAM Role Detail - 역할이 있으면 상세 정보 조회
     let iam_role_detail = iam_role
         .as_ref()
-        .and_then(|role_name| get_iam_role_detail(role_name));
-
-    // Launch Time
+        .and_then(|role_name| iam_adapter::get(role_name));
     let launch_time = extract_json_value(json, "LaunchTime").unwrap_or_default();
-
     let tags = extract_tags(json);
     let name = tags
         .iter()
         .find(|(k, _)| k == "Name")
         .map(|(_, v)| v.clone())
         .unwrap_or_default();
-
     let security_groups = extract_security_groups(json);
-    let volumes = get_instance_volumes(instance_id);
-    let user_data = get_instance_user_data(instance_id);
 
-    Some(Ec2Detail {
+    Ec2Detail {
         name,
         instance_id: instance_id.to_string(),
         instance_type,
@@ -395,11 +474,11 @@ pub fn get_instance_detail(instance_id: &str) -> Option<Ec2Detail> {
         tags,
         volumes,
         user_data,
-    })
+    }
 }
 
 fn get_instance_volumes(instance_id: &str) -> Vec<VolumeDetail> {
-    let output = run_aws_cli(&[
+    let output = cli_adapter::run(&[
         "ec2",
         "describe-instances",
         "--instance-ids",
@@ -413,35 +492,46 @@ fn get_instance_volumes(instance_id: &str) -> Vec<VolumeDetail> {
     let mut volumes = Vec::new();
 
     if let Some(json) = output {
-        let mut search_start = 0;
-        while let Some(device_pos) = json[search_start..].find("\"DeviceName\": \"") {
-            let device_start = search_start + device_pos + 15;
-            if let Some(device_end) = json[device_start..].find('"') {
-                let device_name = json[device_start..device_start + device_end].to_string();
-
-                if let Some(vol_pos) = json[device_start..].find("\"VolumeId\": \"") {
-                    let vol_start = device_start + vol_pos + 13;
-                    if let Some(vol_end) = json[vol_start..].find('"') {
-                        let volume_id = json[vol_start..vol_start + vol_end].to_string();
-
-                        let delete_on_term = json
-                            [device_start..device_start + 500.min(json.len() - device_start)]
-                            .contains("\"DeleteOnTermination\": true");
-
-                        if let Some(vol_detail) =
-                            get_volume_detail(&volume_id, &device_name, delete_on_term)
-                        {
-                            volumes.push(vol_detail);
-                        }
-                    }
-                }
-                search_start = device_start + device_end;
-            } else {
-                break;
+        for (device_name, volume_id, delete_on_term) in parse_instance_volume_mappings(&json) {
+            if let Some(vol_detail) = get_volume_detail(&volume_id, &device_name, delete_on_term) {
+                volumes.push(vol_detail);
             }
         }
     }
     volumes
+}
+
+fn parse_instance_volume_mappings(json: &str) -> Vec<(String, String, bool)> {
+    let mut mappings = Vec::new();
+    let mut search_start = 0;
+
+    while let Some(device_pos) = json[search_start..].find("\"DeviceName\": \"") {
+        let device_marker_start = search_start + device_pos;
+        let device_start = device_marker_start + 15;
+        if let Some(device_end) = json[device_start..].find('"') {
+            let device_name = json[device_start..device_start + device_end].to_string();
+            let next_device_start = json[device_start..]
+                .find("\"DeviceName\": \"")
+                .map(|offset| device_start + offset)
+                .unwrap_or(json.len());
+
+            if let Some(vol_pos) = json[device_start..next_device_start].find("\"VolumeId\": \"") {
+                let vol_start = device_start + vol_pos + 13;
+                if let Some(vol_end) = json[vol_start..].find('"') {
+                    let volume_id = json[vol_start..vol_start + vol_end].to_string();
+                    let delete_on_term = json[device_start..next_device_start]
+                        .contains("\"DeleteOnTermination\": true");
+                    mappings.push((device_name, volume_id, delete_on_term));
+                }
+            }
+
+            search_start = next_device_start;
+        } else {
+            break;
+        }
+    }
+
+    mappings
 }
 
 fn get_volume_detail(
@@ -449,7 +539,7 @@ fn get_volume_detail(
     device_name: &str,
     delete_on_termination: bool,
 ) -> Option<VolumeDetail> {
-    let output = run_aws_cli(&[
+    let output = cli_adapter::run(&[
         "ec2",
         "describe-volumes",
         "--volume-ids",
@@ -458,7 +548,20 @@ fn get_volume_detail(
         "json",
     ])?;
 
-    let json = &output;
+    Some(parse_volume_detail_output(
+        &output,
+        volume_id,
+        device_name,
+        delete_on_termination,
+    ))
+}
+
+fn parse_volume_detail_output(
+    json: &str,
+    volume_id: &str,
+    device_name: &str,
+    delete_on_termination: bool,
+) -> VolumeDetail {
     let size_str = extract_json_value(json, "Size").unwrap_or_default();
     let size_gb = size_str.parse::<i64>().unwrap_or(0);
     let volume_type =
@@ -467,7 +570,7 @@ fn get_volume_detail(
     let iops = iops_str.and_then(|s| s.parse::<i64>().ok());
     let encrypted = json.contains("\"Encrypted\": true");
 
-    Some(VolumeDetail {
+    VolumeDetail {
         device_name: device_name.to_string(),
         volume_id: volume_id.to_string(),
         size_gb,
@@ -475,7 +578,7 @@ fn get_volume_detail(
         iops,
         encrypted,
         delete_on_termination,
-    })
+    }
 }
 
 #[derive(Deserialize)]
@@ -491,7 +594,7 @@ struct UserDataValue {
 }
 
 fn get_instance_user_data(instance_id: &str) -> Option<String> {
-    let output = run_aws_cli(&[
+    let output = cli_adapter::run(&[
         "ec2",
         "describe-instance-attribute",
         "--instance-id",
@@ -502,7 +605,11 @@ fn get_instance_user_data(instance_id: &str) -> Option<String> {
         "json",
     ])?;
 
-    if let Ok(response) = serde_json::from_str::<UserDataResponse>(&output)
+    parse_user_data_output(&output)
+}
+
+fn parse_user_data_output(output: &str) -> Option<String> {
+    if let Ok(response) = serde_json::from_str::<UserDataResponse>(output)
         && let Some(user_data) = response.user_data
         && let Some(base64_data) = user_data.value
         && !base64_data.is_empty()
@@ -536,7 +643,7 @@ fn extract_security_groups(json: &str) -> Vec<String> {
 }
 
 fn get_vpc_name(vpc_id: &str) -> String {
-    let output = run_aws_cli(&[
+    let output = cli_adapter::run(&[
         "ec2",
         "describe-vpcs",
         "--vpc-ids",
@@ -555,7 +662,7 @@ fn get_vpc_name(vpc_id: &str) -> String {
 }
 
 pub fn get_subnet_name(subnet_id: &str) -> String {
-    let output = run_aws_cli(&[
+    let output = cli_adapter::run(&[
         "ec2",
         "describe-subnets",
         "--subnet-ids",
@@ -574,7 +681,7 @@ pub fn get_subnet_name(subnet_id: &str) -> String {
 }
 
 fn get_ami_name(ami_id: &str) -> String {
-    let output = run_aws_cli(&[
+    let output = cli_adapter::run(&[
         "ec2",
         "describe-images",
         "--image-ids",
@@ -590,4 +697,468 @@ fn get_ami_name(ami_id: &str) -> String {
         }
     }
     ami_id.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Ec2Detail, VolumeDetail, cli_adapter, extract_security_groups, extract_state,
+        get_instance_detail, get_subnet_name, iam_adapter, list_instances,
+        parse_instance_detail_output, parse_instance_resources, parse_instance_volume_mappings,
+        parse_user_data_output, parse_volume_detail_output,
+    };
+    use crate::aws_cli::iam::{AttachedPolicy, IamRoleDetail, InlinePolicy};
+    use crate::i18n::Language;
+    use std::sync::{Mutex, OnceLock};
+
+    fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        match LOCK.get_or_init(|| Mutex::new(())).lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn sample_detail() -> Ec2Detail {
+        Ec2Detail {
+            name: "web-a".to_string(),
+            instance_id: "i-0123456789abcdef0".to_string(),
+            instance_type: "t3.micro".to_string(),
+            ami: "ami-12345678".to_string(),
+            platform: "Linux".to_string(),
+            architecture: "x86_64".to_string(),
+            key_pair: "main-key".to_string(),
+            vpc: "vpc-main".to_string(),
+            subnet: "subnet-a".to_string(),
+            az: "ap-northeast-2a".to_string(),
+            public_ip: "1.1.1.1".to_string(),
+            private_ip: "10.0.0.10".to_string(),
+            security_groups: vec!["sg-web".to_string(), "sg-db".to_string()],
+            state: "running".to_string(),
+            ebs_optimized: true,
+            monitoring: "Enabled".to_string(),
+            iam_role: Some("role-web".to_string()),
+            iam_role_detail: Some(IamRoleDetail {
+                name: "role-web".to_string(),
+                arn: "arn:aws:iam::123456789012:role/role-web".to_string(),
+                assume_role_policy: "{\"Version\":\"2012-10-17\"}".to_string(),
+                attached_policies: vec![AttachedPolicy {
+                    name: "ReadOnlyAccess".to_string(),
+                    arn: "arn:aws:iam::aws:policy/ReadOnlyAccess".to_string(),
+                }],
+                inline_policies: vec![InlinePolicy {
+                    name: "inline-policy".to_string(),
+                    document: "{\"Statement\":[]}".to_string(),
+                }],
+            }),
+            launch_time: "2026-02-13T00:00:00Z".to_string(),
+            tags: vec![
+                ("Name".to_string(), "web-a".to_string()),
+                ("Env".to_string(), "prod".to_string()),
+            ],
+            volumes: vec![VolumeDetail {
+                device_name: "/dev/xvda".to_string(),
+                volume_id: "vol-1234".to_string(),
+                size_gb: 30,
+                volume_type: "gp3".to_string(),
+                iops: Some(3000),
+                encrypted: true,
+                delete_on_termination: true,
+            }],
+            user_data: Some("#!/bin/bash\necho hello".to_string()),
+        }
+    }
+
+    #[test]
+    fn parse_instance_resources_extracts_ids_and_names() {
+        let payload = r#"
+            [
+              [
+                ["i-aaa111", "running", [{"Key":"Name","Value":"web-a"}]],
+                ["i-bbb222", "stopped", [{"Key":"Name","Value":"web-b"}]]
+              ]
+            ]
+        "#;
+        let resources = parse_instance_resources(payload);
+        assert_eq!(resources.len(), 2);
+        assert_eq!(resources[0].id, "i-aaa111");
+        assert!(resources[0].name.contains("running"));
+    }
+
+    #[test]
+    fn extract_state_falls_back_to_unknown() {
+        assert_eq!(extract_state(r#"{"State":{"Name":"running"}}"#), "running");
+        assert_eq!(extract_state(r#"{"State":{"Name":"mystery"}}"#), "unknown");
+    }
+
+    #[test]
+    fn extract_security_groups_deduplicates_names() {
+        let payload = r#"
+            {
+              "SecurityGroups": [
+                {"GroupName": "web"},
+                {"GroupName": "db"},
+                {"GroupName": "web"}
+              ]
+            }
+        "#;
+        let names = extract_security_groups(payload);
+        assert_eq!(names, vec!["web".to_string(), "db".to_string()]);
+    }
+
+    #[test]
+    fn ec2_markdown_renders_extended_sections() {
+        let md = sample_detail().to_markdown(Language::English);
+        assert!(md.contains("## EC2 Instance"));
+        assert!(md.contains("IAM Role Detail"));
+        assert!(md.contains("Storage"));
+        assert!(md.contains("User Data"));
+    }
+
+    #[test]
+    fn parse_instance_resources_filters_invalid_and_deduplicates_ids() {
+        let payload = r#"
+            [
+              [
+                ["i-valid001", "running", [{"Key":"Name","Value":"api-a"}]],
+                ["i-valid001", "running", [{"Key":"Name","Value":"api-a"}]],
+                ["i-", "running", [{"Key":"Name","Value":"invalid"}]],
+                ["not-an-instance", "running", [{"Key":"Name","Value":"skip"}]]
+              ]
+            ]
+        "#;
+        let resources = parse_instance_resources(payload);
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].id, "i-valid001");
+    }
+
+    #[test]
+    fn extract_security_groups_handles_empty_payload() {
+        let names = extract_security_groups("{}");
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn ec2_markdown_omits_optional_sections_when_data_is_missing() {
+        let detail = Ec2Detail {
+            name: String::new(),
+            instance_id: "i-0abc".to_string(),
+            instance_type: "t3.nano".to_string(),
+            ami: "ami-0abc".to_string(),
+            platform: "Linux".to_string(),
+            architecture: "x86_64".to_string(),
+            key_pair: "-".to_string(),
+            vpc: "vpc-main".to_string(),
+            subnet: "subnet-a".to_string(),
+            az: "ap-northeast-2a".to_string(),
+            public_ip: "-".to_string(),
+            private_ip: "10.0.0.5".to_string(),
+            security_groups: vec!["sg-main".to_string()],
+            state: "stopped".to_string(),
+            ebs_optimized: false,
+            monitoring: "Disabled".to_string(),
+            iam_role: None,
+            iam_role_detail: None,
+            launch_time: String::new(),
+            tags: vec![],
+            volumes: vec![],
+            user_data: None,
+        };
+
+        let md = detail.to_markdown(Language::English);
+        assert!(md.contains("NULL - i-0abc"));
+        assert!(!md.contains("IAM Role Detail"));
+        assert!(!md.contains("### Storage"));
+        assert!(!md.contains("### User Data"));
+        assert!(!md.contains("Public IP"));
+    }
+
+    #[test]
+    fn parse_instance_detail_output_maps_basic_fields_from_fixture_json() {
+        let payload = r#"
+        {
+          "InstanceType": "t3.micro",
+          "Platform": "Windows",
+          "Architecture": "x86_64",
+          "KeyName": "main-key",
+          "AvailabilityZone": "ap-northeast-2a",
+          "PublicIpAddress": "3.3.3.3",
+          "PrivateIpAddress": "10.0.0.20",
+          "EbsOptimized": true,
+          "LaunchTime": "2026-02-13T00:00:00Z",
+          "Tags": [{"Key": "Name", "Value": "web-a"}, {"Key": "Env", "Value": "prod"}],
+          "SecurityGroups": [{"GroupName": "sg-web"}],
+          "State": {"Name": "running"},
+          "Monitoring": {"State": "enabled"}
+        }
+        "#;
+
+        let detail = parse_instance_detail_output(
+            "i-abc",
+            payload,
+            "ami-name".to_string(),
+            "vpc-name".to_string(),
+            "subnet-name".to_string(),
+            vec![],
+            None,
+        );
+        assert_eq!(detail.instance_id, "i-abc");
+        assert_eq!(detail.instance_type, "t3.micro");
+        assert_eq!(detail.platform, "Windows");
+        assert_eq!(detail.monitoring, "Enabled");
+        assert_eq!(detail.name, "web-a");
+        assert_eq!(detail.security_groups, vec!["sg-web".to_string()]);
+    }
+
+    #[test]
+    fn parse_instance_volume_mappings_and_volume_details_handle_fixture_json() {
+        let mappings_payload = r#"
+        [
+          {"DeviceName": "/dev/xvda", "Ebs": {"VolumeId": "vol-1", "DeleteOnTermination": true}},
+          {"DeviceName": "/dev/xvdb", "Ebs": {"VolumeId": "vol-2", "DeleteOnTermination": false}}
+        ]
+        "#;
+        let mappings = parse_instance_volume_mappings(mappings_payload);
+        assert_eq!(mappings.len(), 2);
+        assert_eq!(mappings[0].0, "/dev/xvda");
+        assert!(mappings[0].2);
+        assert!(!mappings[1].2);
+
+        let volume_payload = r#"{"VolumeId": "vol-1", "Size": "30", "VolumeType": "gp3", "Iops": "3000", "Encrypted": true}"#;
+        let volume = parse_volume_detail_output(volume_payload, "vol-1", "/dev/xvda", true);
+        assert_eq!(volume.size_gb, 30);
+        assert_eq!(volume.volume_type, "gp3");
+        assert_eq!(volume.iops, Some(3000));
+        assert!(volume.encrypted);
+        assert!(volume.delete_on_termination);
+    }
+
+    #[test]
+    fn parse_user_data_output_decodes_base64_and_rejects_empty_payloads() {
+        let payload = r#"{"UserData":{"Value":"IyEvYmluL2Jhc2gKZWNobyBoaQ=="}}"#;
+        let decoded = parse_user_data_output(payload).expect("decoded user data");
+        assert!(decoded.contains("#!/bin/bash"));
+        assert!(decoded.contains("echo hi"));
+
+        let empty_payload = r#"{"UserData":{"Value":""}}"#;
+        assert_eq!(parse_user_data_output(empty_payload), None);
+    }
+
+    #[test]
+    fn top_level_list_instances_uses_mocked_cli() {
+        let _guard = test_lock();
+        cli_adapter::clear();
+        iam_adapter::clear();
+
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-instances",
+                "--query",
+                "Reservations[*].Instances[*].[InstanceId,State.Name,Tags]",
+                "--output",
+                "json",
+            ],
+            Some(
+                r#"
+                [
+                  [
+                    ["i-abc123", "running", [{"Key": "Name", "Value": "web-a"}]],
+                    ["i-def456", "stopped", [{"Key": "Name", "Value": "web-b"}]]
+                  ]
+                ]
+                "#,
+            ),
+        );
+
+        let resources = list_instances();
+        assert_eq!(resources.len(), 2);
+        assert_eq!(resources[0].id, "i-abc123");
+        assert!(resources[0].name.contains("running"));
+    }
+
+    #[test]
+    fn top_level_get_instance_detail_uses_mocked_cli_and_iam() {
+        let _guard = test_lock();
+        cli_adapter::clear();
+        iam_adapter::clear();
+
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-instances",
+                "--instance-ids",
+                "i-abc",
+                "--output",
+                "json",
+            ],
+            Some(
+                r#"
+                {
+                  "Reservations": [{
+                    "Instances": [{
+                      "InstanceId": "i-abc",
+                      "InstanceType": "t3.micro",
+                      "ImageId": "ami-123",
+                      "Platform": "Linux",
+                      "Architecture": "x86_64",
+                      "KeyName": "main-key",
+                      "VpcId": "vpc-123",
+                      "SubnetId": "subnet-123",
+                      "Placement": {"AvailabilityZone": "ap-northeast-2a"},
+                      "PublicIpAddress": "1.2.3.4",
+                      "PrivateIpAddress": "10.0.0.10",
+                      "State": {"Name": "running"},
+                      "Monitoring": {"State": "enabled"},
+                      "EbsOptimized": true,
+                      "IamInstanceProfile": {
+                        "Arn": "arn:aws:iam::123456789012:instance-profile/role-web"
+                      },
+                      "LaunchTime": "2026-02-13T00:00:00Z",
+                      "Tags": [
+                        {"Key": "Name", "Value": "web-a"},
+                        {"Key": "Env", "Value": "prod"}
+                      ],
+                      "SecurityGroups": [{"GroupName": "sg-web"}]
+                    }]
+                  }]
+                }
+                "#,
+            ),
+        );
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-images",
+                "--image-ids",
+                "ami-123",
+                "--output",
+                "json",
+            ],
+            Some(
+                r#"{"Images":[{"ImageId":"ami-123","Tags":[{"Key": "Name", "Value": "ubuntu"}]}]}"#,
+            ),
+        );
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-vpcs",
+                "--vpc-ids",
+                "vpc-123",
+                "--output",
+                "json",
+            ],
+            Some(r#"{"Vpcs":[{"VpcId":"vpc-123","Tags":[{"Key": "Name", "Value": "main-vpc"}]}]}"#),
+        );
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-subnets",
+                "--subnet-ids",
+                "subnet-123",
+                "--output",
+                "json",
+            ],
+            Some(
+                r#"{"Subnets":[{"SubnetId":"subnet-123","Tags":[{"Key": "Name", "Value": "public-a"}]}]}"#,
+            ),
+        );
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-instances",
+                "--instance-ids",
+                "i-abc",
+                "--query",
+                "Reservations[0].Instances[0].BlockDeviceMappings",
+                "--output",
+                "json",
+            ],
+            Some(
+                r#"
+                [
+                  {"DeviceName": "/dev/xvda", "Ebs": {"VolumeId": "vol-1", "DeleteOnTermination": true}}
+                ]
+                "#,
+            ),
+        );
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-volumes",
+                "--volume-ids",
+                "vol-1",
+                "--output",
+                "json",
+            ],
+            Some(
+                r#"{"Volumes":[{"VolumeId": "vol-1", "Size": "30", "VolumeType": "gp3", "Iops": "3000", "Encrypted": true}]}"#,
+            ),
+        );
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-instance-attribute",
+                "--instance-id",
+                "i-abc",
+                "--attribute",
+                "userData",
+                "--output",
+                "json",
+            ],
+            Some(r#"{"UserData":{"Value":"IyEvYmluL2Jhc2gKZWNobyBoaQ=="}}"#),
+        );
+
+        iam_adapter::set(
+            "role-web",
+            Some(IamRoleDetail {
+                name: "role-web".to_string(),
+                arn: "arn:aws:iam::123456789012:role/role-web".to_string(),
+                assume_role_policy: "{\"Version\":\"2012-10-17\"}".to_string(),
+                attached_policies: vec![],
+                inline_policies: vec![],
+            }),
+        );
+
+        let detail = get_instance_detail("i-abc").expect("instance detail");
+        assert_eq!(detail.instance_id, "i-abc");
+        assert_eq!(detail.name, "web-a");
+        assert_eq!(detail.ami, "ubuntu");
+        assert_eq!(detail.vpc, "main-vpc");
+        assert_eq!(detail.subnet, "public-a");
+        assert_eq!(detail.volumes.len(), 1);
+        assert_eq!(detail.volumes[0].volume_id, "vol-1");
+        assert!(
+            detail
+                .user_data
+                .as_deref()
+                .unwrap_or_default()
+                .contains("echo hi")
+        );
+        assert_eq!(detail.iam_role.as_deref(), Some("role-web"));
+        assert!(detail.iam_role_detail.is_some());
+    }
+
+    #[test]
+    fn top_level_get_subnet_name_handles_found_and_missing_cases() {
+        let _guard = test_lock();
+        cli_adapter::clear();
+        iam_adapter::clear();
+
+        cli_adapter::set(
+            &[
+                "ec2",
+                "describe-subnets",
+                "--subnet-ids",
+                "subnet-777",
+                "--output",
+                "json",
+            ],
+            Some(
+                r#"{"Subnets":[{"SubnetId":"subnet-777","Tags":[{"Key": "Name", "Value": "app-a"}]}]}"#,
+            ),
+        );
+        assert_eq!(get_subnet_name("subnet-777"), "app-a");
+        assert_eq!(get_subnet_name("subnet-999"), "subnet-999");
+    }
 }

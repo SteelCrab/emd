@@ -42,7 +42,7 @@ fn main() -> io::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new();
-    app.check_login();
+    app.init_auth_flow();
 
     let res = run_app(&mut terminal, &mut app);
 
@@ -72,6 +72,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
             continue;
         }
 
+        app.check_login_if_needed_for_current_screen();
+
         // 100ms 타임아웃으로 이벤트 폴링
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
@@ -88,4 +90,22 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{App, run_app};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn run_app_returns_immediately_when_not_running() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).expect("create terminal");
+        let mut app = App::new();
+        app.running = false;
+
+        let result = run_app(&mut terminal, &mut app);
+        assert!(result.is_ok());
+    }
 }

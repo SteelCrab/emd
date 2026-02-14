@@ -11,8 +11,44 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  quality:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,llvm-tools-preview
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: quality-gate
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Lint Cleanup
+        run: ./tools/rust-lint-cleanup.sh
+
+      - name: Test
+        run: cargo test --all-targets --all-features
+
+      - name: Coverage + Scenario Gate
+        run: bash ./tools/rust-coverage.sh
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./target/llvm-cov-target/lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
   build:
     name: Build - ${{ matrix.platform.name }}
+    needs: quality
     runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false

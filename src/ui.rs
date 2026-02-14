@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::app::{App, LoadingTask, REGIONS, SERVICE_KEYS, Screen};
+use crate::aws_cli::AwsAuthErrorCode;
 
 const EMD_LOGO: &str = r#"
   ______ __  __ _____  
@@ -80,7 +81,13 @@ fn draw_header(frame: &mut Frame, area: Rect) {
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let i = &app.i18n;
     let help = match &app.screen {
-        Screen::Login => format!("Enter: {} | q: {}", i.retry(), i.exit()),
+        Screen::Login => format!(
+            "↑↓/jk: {} | Enter: {} | r: {} | q: {}",
+            i.move_cursor(),
+            i.select(),
+            i.refresh(),
+            i.exit()
+        ),
         Screen::BlueprintSelect => format!(
             "↑↓/jk: {} | Enter: {} | g: {} | d: {} | s: {} | ►: {} | q: {}",
             i.move_cursor(),
@@ -365,48 +372,75 @@ fn draw_vpc_loading_checklist(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_login(frame: &mut Frame, app: &App, area: Rect) {
     let i = &app.i18n;
-    let content = if let Some(ref info) = app.login_info {
-        vec![
-            Line::from(Span::styled(
-                i.aws_login_verified(),
-                Style::default().fg(Color::Green),
-            )),
-            Line::from(""),
-            Line::from(info.as_str()),
-        ]
-    } else if let Some(ref err) = app.login_error {
-        vec![
-            Line::from(Span::styled(
-                i.aws_login_required(),
-                Style::default().fg(Color::Red),
-            )),
-            Line::from(""),
-            Line::from(err.as_str()),
-            Line::from(""),
-            Line::from(i.aws_configure_hint()),
-        ]
-    } else {
-        vec![Line::from(i.aws_login_checking())]
-    };
+    let mut content = vec![Line::from("")];
 
-    let mut login_content = vec![Line::from("")];
-
-    for line in EMD_LOGO.lines() {
-        login_content.push(Line::from(Span::styled(
-            line,
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+    if let Some(error) = app.login_error.as_ref() {
+        content.push(Line::from(Span::styled(
+            i.aws_login_required(),
+            Style::default().fg(Color::Red),
         )));
+        content.push(Line::from(""));
+        let display_error = match error.code {
+            AwsAuthErrorCode::CredentialsProviderMissing
+            | AwsAuthErrorCode::CredentialsLoadFailed
+            | AwsAuthErrorCode::CallerIdentityFailed => i.aws_login_retry_hint(),
+            AwsAuthErrorCode::Network | AwsAuthErrorCode::Unknown => error.as_str(),
+        };
+        content.push(Line::from(Span::styled(
+            display_error,
+            Style::default().fg(Color::Red),
+        )));
+        content.push(Line::from(""));
     }
 
-    login_content.push(Line::from(""));
-    login_content.extend(content);
+    if app.available_profiles.is_empty() {
+        content.push(Line::from(i.aws_login_checking()));
+        content.push(Line::from(""));
+        content.push(Line::from(i.profile_not_found()));
+        content.push(Line::from(i.profile_refresh_hint()));
+        content.push(Line::from(i.aws_configure_hint()));
+    } else {
+        content.push(Line::from(Span::styled(
+            i.aws_login_verified(),
+            Style::default().fg(Color::Green),
+        )));
+        content.push(Line::from(""));
+        content.push(Line::from(i.profile_select_prompt()));
+        content.push(Line::from(""));
 
-    let title = format!(" {} ", i.login());
-    let para = Paragraph::new(login_content)
-        .block(Block::default().title(title).borders(Borders::ALL))
-        .alignment(Alignment::Center);
+        for (index, profile) in app.available_profiles.iter().enumerate() {
+            let selected = index == app.selected_profile_index;
+            let prefix = if selected { "▶ " } else { "  " };
+            let style = if selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            content.push(Line::from(Span::styled(
+                format!("{prefix}{profile}"),
+                style,
+            )));
+        }
+
+        if let Some(info) = app.login_info.as_ref() {
+            content.push(Line::from(""));
+            content.push(Line::from(Span::styled(
+                info.as_str(),
+                Style::default().fg(Color::Green),
+            )));
+        }
+    }
+
+    let para = Paragraph::new(content)
+        .block(
+            Block::default()
+                .title(format!(" {} ", i.login()))
+                .borders(Borders::ALL),
+        )
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: false });
     frame.render_widget(para, area);
 }
 
@@ -1055,4 +1089,193 @@ fn draw_asg_select(frame: &mut Frame, app: &App, area: Rect) {
 
     let list = List::new(items).block(Block::default().title(title).borders(Borders::ALL));
     frame.render_widget(list, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::draw;
+    use crate::app::{App, LoadingTask, Screen};
+    use crate::aws_cli::{AwsAuthError, AwsAuthErrorCode, AwsResource};
+    use crate::blueprint::{Blueprint, BlueprintResource, ResourceType};
+    use chrono::Utc;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn resource(id: &str, name: &str) -> AwsResource {
+        AwsResource {
+            name: name.to_string(),
+            id: id.to_string(),
+            state: "running".to_string(),
+            az: "ap-northeast-2a".to_string(),
+            cidr: "10.0.0.0/24".to_string(),
+        }
+    }
+
+    fn render_app(app: &App) {
+        let backend = TestBackend::new(160, 50);
+        let mut terminal = Terminal::new(backend).expect("create test terminal");
+        terminal.draw(|frame| draw(frame, app)).expect("draw");
+    }
+
+    fn sample_blueprint() -> Blueprint {
+        Blueprint {
+            id: "bp-1".to_string(),
+            name: "bp-main".to_string(),
+            resources: vec![BlueprintResource {
+                resource_type: ResourceType::Ec2,
+                region: "ap-northeast-2".to_string(),
+                resource_id: "i-1234".to_string(),
+                resource_name: "web-1".to_string(),
+            }],
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn draw_renders_all_main_screens_without_panic() {
+        let mut app = App::new();
+        app.instances = vec![resource("i-1234", "web-1")];
+        app.vpcs = vec![resource("vpc-1234", "main-vpc")];
+        app.security_groups = vec![resource("sg-1234", "sg-web")];
+        app.load_balancers = vec![resource("lb-1234", "alb-main")];
+        app.ecr_repositories = vec![resource("repo-a", "repo-a")];
+        app.auto_scaling_groups = vec![resource("asg-a", "asg-a")];
+        app.preview_filename = "preview.md".to_string();
+        app.preview_content = "# hello\nworld\n".to_string();
+        app.current_blueprint = Some(sample_blueprint());
+        app.blueprint_store.blueprints = vec![sample_blueprint()];
+        app.input_buffer = "new-blueprint".to_string();
+
+        let screens = [
+            Screen::Login,
+            Screen::BlueprintSelect,
+            Screen::BlueprintDetail,
+            Screen::BlueprintNameInput,
+            Screen::BlueprintPreview,
+            Screen::RegionSelect,
+            Screen::ServiceSelect,
+            Screen::Ec2Select,
+            Screen::VpcSelect,
+            Screen::SecurityGroupSelect,
+            Screen::LoadBalancerSelect,
+            Screen::EcrSelect,
+            Screen::AsgSelect,
+            Screen::Preview,
+            Screen::Settings,
+        ];
+
+        for screen in screens {
+            app.screen = screen;
+            render_app(&app);
+        }
+    }
+
+    #[test]
+    fn draw_renders_loading_variants_without_panic() {
+        let mut app = App::new();
+        app.loading = true;
+        app.current_blueprint = Some(sample_blueprint());
+        app.blueprint_store.blueprints = vec![sample_blueprint()];
+        app.blueprint_markdown_parts = vec!["## sample".to_string()];
+
+        app.loading_task = LoadingTask::RefreshEc2;
+        render_app(&app);
+
+        app.loading_task = LoadingTask::LoadVpcDetail("vpc-1234".to_string(), 3);
+        app.loading_progress.vpc_info = true;
+        app.loading_progress.subnets = true;
+        render_app(&app);
+
+        app.loading_task = LoadingTask::LoadBlueprintResources(0);
+        render_app(&app);
+    }
+
+    #[test]
+    fn draw_login_variants_without_panic() {
+        let mut app = App::new();
+        app.screen = Screen::Login;
+        app.login_error = Some(AwsAuthError {
+            code: AwsAuthErrorCode::CredentialsLoadFailed,
+            detail: "an error occurred while loading credentials".to_string(),
+        });
+        render_app(&app);
+
+        app.available_profiles = vec!["default".to_string(), "dev".to_string()];
+        app.selected_profile_index = 1;
+        app.login_error = Some(AwsAuthError {
+            code: AwsAuthErrorCode::Unknown,
+            detail: "ExpiredToken".to_string(),
+        });
+        app.login_info = Some("161203794945 (arn:aws:iam::161203794945:user/pyh5523)".to_string());
+        render_app(&app);
+    }
+
+    #[test]
+    fn draw_renders_empty_resource_select_screens_without_panic() {
+        let mut app = App::new();
+        let screens = [
+            Screen::Ec2Select,
+            Screen::VpcSelect,
+            Screen::SecurityGroupSelect,
+            Screen::LoadBalancerSelect,
+            Screen::EcrSelect,
+            Screen::AsgSelect,
+        ];
+
+        for screen in screens {
+            app.screen = screen;
+            render_app(&app);
+        }
+    }
+
+    #[test]
+    fn draw_blueprint_fallback_paths_without_panic() {
+        let mut app = App::new();
+        app.screen = Screen::BlueprintDetail;
+        render_app(&app);
+
+        let mut empty_blueprint = sample_blueprint();
+        empty_blueprint.resources.clear();
+        app.current_blueprint = Some(empty_blueprint);
+        render_app(&app);
+
+        app.loading = true;
+        app.loading_task = LoadingTask::LoadBlueprintResources(0);
+        app.current_blueprint = None;
+        render_app(&app);
+    }
+
+    #[test]
+    fn draw_renders_all_standard_loading_tasks_without_panic() {
+        let mut app = App::new();
+        app.loading = true;
+
+        let tasks = vec![
+            LoadingTask::None,
+            LoadingTask::RefreshEc2,
+            LoadingTask::RefreshVpc,
+            LoadingTask::RefreshSecurityGroup,
+            LoadingTask::RefreshPreview,
+            LoadingTask::LoadEc2,
+            LoadingTask::LoadEc2Detail("i-1234".to_string()),
+            LoadingTask::LoadVpc,
+            LoadingTask::LoadSecurityGroup,
+            LoadingTask::LoadSecurityGroupDetail("sg-1234".to_string()),
+            LoadingTask::RefreshLoadBalancer,
+            LoadingTask::LoadLoadBalancer,
+            LoadingTask::LoadLoadBalancerDetail("lb-1234".to_string()),
+            LoadingTask::RefreshEcr,
+            LoadingTask::LoadEcr,
+            LoadingTask::LoadEcrDetail("repo-a".to_string()),
+            LoadingTask::RefreshAsg,
+            LoadingTask::LoadAsg,
+            LoadingTask::LoadAsgDetail("asg-a".to_string()),
+        ];
+
+        for task in tasks {
+            app.loading_task = task;
+            render_app(&app);
+        }
+    }
 }

@@ -144,31 +144,37 @@ pub fn list_security_groups() -> Vec<AwsResource> {
         None => return Vec::new(),
     };
 
-    let response: SecurityGroupsResponse = match serde_json::from_str(&output) {
+    parse_security_groups_list_output(&output).unwrap_or_default()
+}
+
+fn parse_security_groups_list_output(output: &str) -> Option<Vec<AwsResource>> {
+    let response: SecurityGroupsResponse = match serde_json::from_str(output) {
         Ok(r) => r,
-        Err(_) => return Vec::new(),
+        Err(_) => return None,
     };
 
-    response
-        .security_groups
-        .into_iter()
-        .map(|sg| {
-            let name = sg
-                .tags
-                .iter()
-                .find(|t| t.key == "Name")
-                .map(|t| t.value.clone())
-                .unwrap_or_else(|| sg.group_name.clone());
+    Some(
+        response
+            .security_groups
+            .into_iter()
+            .map(|sg| {
+                let name = sg
+                    .tags
+                    .iter()
+                    .find(|t| t.key == "Name")
+                    .map(|t| t.value.clone())
+                    .unwrap_or_else(|| sg.group_name.clone());
 
-            AwsResource {
-                name: format!("{} ({})", name, sg.group_name),
-                id: sg.group_id,
-                state: sg.vpc_id,
-                az: String::new(),
-                cidr: String::new(),
-            }
-        })
-        .collect()
+                AwsResource {
+                    name: format!("{} ({})", name, sg.group_name),
+                    id: sg.group_id,
+                    state: sg.vpc_id,
+                    az: String::new(),
+                    cidr: String::new(),
+                }
+            })
+            .collect(),
+    )
 }
 
 pub fn get_security_group_detail(sg_id: &str) -> Option<SecurityGroupDetail> {
@@ -181,7 +187,11 @@ pub fn get_security_group_detail(sg_id: &str) -> Option<SecurityGroupDetail> {
         "json",
     ])?;
 
-    let response: SecurityGroupsResponse = serde_json::from_str(&output).ok()?;
+    parse_security_group_detail_output(&output)
+}
+
+fn parse_security_group_detail_output(output: &str) -> Option<SecurityGroupDetail> {
+    let response: SecurityGroupsResponse = serde_json::from_str(output).ok()?;
     let sg = response.security_groups.first()?;
 
     let name = sg
@@ -266,4 +276,138 @@ fn parse_security_rules(permissions: &[IpPermission]) -> Vec<SecurityRule> {
     }
 
     rules
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        IpPermission, SecurityGroupDetail, SecurityRule, parse_security_group_detail_output,
+        parse_security_groups_list_output, parse_security_rules,
+    };
+    use crate::i18n::Language;
+
+    #[test]
+    fn parse_security_rules_supports_ipv4_ipv6_and_sg_pair() {
+        let json = r#"
+            [
+              {
+                "IpProtocol":"tcp",
+                "FromPort":80,
+                "ToPort":80,
+                "IpRanges":[{"CidrIp":"0.0.0.0/0","Description":"web"}],
+                "Ipv6Ranges":[{"CidrIpv6":"::/0"}],
+                "UserIdGroupPairs":[{"GroupId":"sg-1234","Description":"peer"}]
+              }
+            ]
+        "#;
+        let permissions: Vec<IpPermission> =
+            serde_json::from_str(json).expect("deserialize permissions");
+        let rules = parse_security_rules(&permissions);
+
+        assert_eq!(rules.len(), 3);
+        assert!(rules.iter().any(|r| r.source_dest == "0.0.0.0/0"));
+        assert!(rules.iter().any(|r| r.source_dest == "::/0"));
+        assert!(rules.iter().any(|r| r.source_dest == "sg: sg-1234"));
+    }
+
+    #[test]
+    fn security_group_markdown_contains_inbound_and_outbound_sections() {
+        let detail = SecurityGroupDetail {
+            name: "sg-web".to_string(),
+            id: "sg-1234".to_string(),
+            description: "web sg".to_string(),
+            vpc_id: "vpc-1111".to_string(),
+            inbound_rules: vec![SecurityRule {
+                protocol: "TCP".to_string(),
+                port_range: "80".to_string(),
+                source_dest: "0.0.0.0/0".to_string(),
+                description: "web".to_string(),
+            }],
+            outbound_rules: vec![SecurityRule {
+                protocol: "All".to_string(),
+                port_range: "All".to_string(),
+                source_dest: "0.0.0.0/0".to_string(),
+                description: "-".to_string(),
+            }],
+        };
+
+        let md = detail.to_markdown(Language::English);
+        assert!(md.contains("## Security Group"));
+        assert!(md.contains("Inbound Rules"));
+        assert!(md.contains("Outbound Rules"));
+    }
+
+    #[test]
+    fn parse_security_groups_list_output_prefers_name_tag_or_group_name() {
+        let payload = r#"
+        {
+          "SecurityGroups": [
+            {
+              "GroupId": "sg-1",
+              "GroupName": "web-default",
+              "Description": "web",
+              "VpcId": "vpc-1",
+              "Tags": [{"Key":"Name","Value":"web-sg"}]
+            },
+            {
+              "GroupId": "sg-2",
+              "GroupName": "db-default",
+              "Description": "db",
+              "VpcId": "vpc-1",
+              "Tags": []
+            }
+          ]
+        }
+        "#;
+        let groups = parse_security_groups_list_output(payload).expect("groups");
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].id, "sg-1");
+        assert!(groups[0].name.contains("web-sg"));
+        assert!(groups[1].name.contains("db-default"));
+    }
+
+    #[test]
+    fn parse_security_group_detail_output_builds_detail_and_rules() {
+        let payload = r#"
+        {
+          "SecurityGroups": [
+            {
+              "GroupId": "sg-1",
+              "GroupName": "web",
+              "Description": "web sg",
+              "VpcId": "vpc-1",
+              "IpPermissions": [
+                {"IpProtocol":"tcp","FromPort":443,"ToPort":443,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]}
+              ],
+              "IpPermissionsEgress": [
+                {"IpProtocol":"-1","IpRanges":[{"CidrIp":"0.0.0.0/0"}]}
+              ],
+              "Tags": [{"Key":"Name","Value":"web-main"}]
+            }
+          ]
+        }
+        "#;
+        let detail = parse_security_group_detail_output(payload).expect("detail");
+        assert_eq!(detail.name, "web-main");
+        assert_eq!(detail.id, "sg-1");
+        assert_eq!(detail.inbound_rules.len(), 1);
+        assert_eq!(detail.outbound_rules.len(), 1);
+        assert_eq!(detail.inbound_rules[0].port_range, "443");
+    }
+
+    #[test]
+    fn security_group_markdown_omits_rule_sections_when_empty() {
+        let detail = SecurityGroupDetail {
+            name: String::new(),
+            id: "sg-0".to_string(),
+            description: "empty".to_string(),
+            vpc_id: "vpc-0".to_string(),
+            inbound_rules: vec![],
+            outbound_rules: vec![],
+        };
+        let md = detail.to_markdown(Language::English);
+        assert!(md.contains("NULL - sg-0"));
+        assert!(!md.contains("Inbound Rules"));
+        assert!(!md.contains("Outbound Rules"));
+    }
 }

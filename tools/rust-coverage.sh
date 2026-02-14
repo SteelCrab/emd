@@ -6,7 +6,22 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+find_project_root() {
+  local dir="$SCRIPT_DIR"
+  while [[ "$dir" != "/" ]]; do
+    if [[ -f "$dir/Cargo.toml" ]]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+PROJECT_ROOT="$(find_project_root)" || {
+  echo "Cargo.toml not found from script path: $SCRIPT_DIR"
+  exit 1
+}
 SCENARIO_CATALOG="${SCENARIO_CATALOG:-${SCRIPT_DIR}/test-scenarios.csv}"
 MIN_LINES="${MIN_LINES:-85}"
 

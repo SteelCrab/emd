@@ -471,7 +471,7 @@ mod tests {
         parse_load_balancer_detail_output, parse_load_balancers_output,
         parse_target_group_info_outputs,
     };
-    use crate::i18n::Language;
+    use crate::i18n::{I18n, Language};
 
     #[test]
     fn load_balancer_markdown_contains_listener_and_target_group_sections() {

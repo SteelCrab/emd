@@ -37,6 +37,16 @@ emd version      # Show version
 emd help         # Show help
 ```
 
+## Development
+
+### Pre-commit
+
+```bash
+pipx install pre-commit  # or pip install pre-commit
+pre-commit install
+pre-commit run --all-files
+```
+
 
 ## Configuration
 

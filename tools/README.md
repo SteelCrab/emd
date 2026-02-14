@@ -14,19 +14,12 @@ This folder groups quality/coverage helper assets.
 From repository root:
 
 ```bash
-./rust-lint-cleanup.sh
-./rust-coverage.sh
-```
-
-Direct execution:
-
-```bash
-bash tools/quality/rust-lint-cleanup.sh
-bash tools/quality/rust-coverage.sh
+./tools/rust-lint-cleanup.sh
+./tools/rust-coverage.sh
 ```
 
 ## Main env vars
 - `MIN_LINES` (default: `85`)
-- `SCENARIO_CATALOG` (default: `tools/quality/test-scenarios.csv`)
+- `SCENARIO_CATALOG` (default: `tools/test-scenarios.csv`)
 - `MIN_TOTAL` (default: `20`)
 - `MIN_AUTOMATED` (default: `17`)

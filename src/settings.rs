@@ -6,6 +6,8 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppSettings {
     pub language: Language,
+    #[serde(default)]
+    pub aws_profile: Option<String>,
 }
 
 fn get_settings_path() -> Option<PathBuf> {
@@ -114,10 +116,12 @@ mod tests {
 
         let to_save = AppSettings {
             language: Language::Korean,
+            aws_profile: Some("default".to_string()),
         };
         save_settings(&to_save).expect("save settings");
 
         let loaded = load_settings();
         assert_eq!(loaded.language, Language::Korean);
+        assert_eq!(loaded.aws_profile.as_deref(), Some("default"));
     }
 }

@@ -42,7 +42,7 @@ fn main() -> io::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new();
-    app.check_login();
+    app.init_auth_flow();
 
     let res = run_app(&mut terminal, &mut app);
 
@@ -71,6 +71,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
             handler::process_loading(app);
             continue;
         }
+
+        app.check_login_if_needed_for_current_screen();
 
         // 100ms 타임아웃으로 이벤트 폴링
         if event::poll(Duration::from_millis(100))? {

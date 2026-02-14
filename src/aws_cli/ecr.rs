@@ -77,12 +77,12 @@ impl EcrDetail {
         let i18n = I18n::new(lang);
         let encryption_display = if self.encryption_type == "KMS" {
             if let Some(ref key) = self.kms_key {
-                format!("AWS KMS ({})", key)
+                format!("{} ({})", i18n.ecr_encryption_kms(), key)
             } else {
-                "AWS KMS".to_string()
+                i18n.ecr_encryption_kms().to_string()
             }
         } else {
-            "AES-256".to_string()
+            i18n.ecr_encryption_aes256().to_string()
         };
 
         let lines = vec![
@@ -90,7 +90,7 @@ impl EcrDetail {
             format!("| {} | {} |", i18n.item(), i18n.value()),
             "|:---|:---|".to_string(),
             format!("| {} | {} |", i18n.md_name(), self.name),
-            format!("| URI | {} |", self.uri),
+            format!("| {} | {} |", i18n.md_uri(), self.uri),
             format!("| {} | {} |", i18n.md_tag_mutability(), self.tag_mutability),
             format!("| {} | {} |", i18n.md_encryption(), encryption_display),
             format!("| {} | {} |", i18n.md_image_count(), self.image_count),

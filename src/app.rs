@@ -1,9 +1,43 @@
-use crate::aws_cli::{self, AsgDetail, AwsResource, Ec2Detail, EcrDetail};
+use crate::aws_cli::{
+    self, AsgDetail, AwsAuthError, AwsAuthErrorCode, AwsResource, Ec2Detail, EcrDetail,
+};
 use crate::blueprint::{
     Blueprint, BlueprintResource, BlueprintStore, ResourceType, load_blueprints, save_blueprints,
 };
 use crate::i18n::{I18n, Language};
 use crate::settings::{AppSettings, load_settings, save_settings};
+use std::time::{Duration, Instant};
+
+const LOGIN_SESSION_CHECK_INTERVAL: Duration = Duration::from_secs(15);
+
+fn is_login_required_error(error: &AwsAuthError) -> bool {
+    matches!(
+        error.code,
+        AwsAuthErrorCode::CredentialsProviderMissing
+            | AwsAuthErrorCode::CredentialsLoadFailed
+            | AwsAuthErrorCode::CallerIdentityFailed
+    )
+}
+
+fn is_login_required_message(message: &str, i18n: &I18n) -> bool {
+    message == i18n.auth_provider_missing()
+        || message == i18n.auth_credentials_load_failed()
+        || message == i18n.auth_caller_identity_failed()
+}
+
+fn is_aws_credential_message(message: &str, i18n: &I18n) -> bool {
+    message == i18n.auth_network_error() || message == i18n.auth_unknown_error()
+}
+
+fn auth_error_message(error: &AwsAuthError, i18n: &I18n) -> String {
+    match error.code {
+        AwsAuthErrorCode::CredentialsProviderMissing => i18n.auth_provider_missing().to_string(),
+        AwsAuthErrorCode::CredentialsLoadFailed => i18n.auth_credentials_load_failed().to_string(),
+        AwsAuthErrorCode::CallerIdentityFailed => i18n.auth_caller_identity_failed().to_string(),
+        AwsAuthErrorCode::Network => i18n.auth_network_error().to_string(),
+        AwsAuthErrorCode::Unknown => i18n.auth_unknown_error().to_string(),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -161,8 +195,11 @@ pub struct App {
     pub loading: bool,
     pub loading_task: LoadingTask,
     pub loading_progress: LoadingProgress,
+    pub last_login_check: Option<Instant>,
     pub login_info: Option<String>,
     pub login_error: Option<String>,
+    pub available_profiles: Vec<String>,
+    pub selected_profile_index: usize,
     pub selected_region: usize,
     pub selected_service: usize,
     pub selected_index: usize,
@@ -173,7 +210,6 @@ pub struct App {
     pub i18n: I18n,
     pub selected_setting: usize,
     pub selected_tab: usize, // 0: Main, 1: Settings
-
     // AWS Resources
     pub instances: Vec<AwsResource>,
     pub vpcs: Vec<AwsResource>,
@@ -222,8 +258,11 @@ impl App {
             loading: false,
             loading_task: LoadingTask::None,
             loading_progress: LoadingProgress::default(),
+            last_login_check: None,
             login_info: None,
             login_error: None,
+            available_profiles: Vec::new(),
+            selected_profile_index: 0,
             selected_region: 0,
             selected_service: 0,
             selected_index: 0,
@@ -262,16 +301,173 @@ impl App {
         }
     }
 
+    pub fn init_auth_flow(&mut self) {
+        self.screen = Screen::Login;
+        self.last_login_check = None;
+        self.refresh_profiles();
+    }
+
+    pub fn refresh_profiles(&mut self) {
+        match aws_cli::list_aws_profiles() {
+            Ok(profiles) => {
+                self.available_profiles = profiles;
+                self.selected_profile_index = 0;
+
+                if self.available_profiles.is_empty() {
+                    self.login_info = None;
+                    self.login_error = Some(format!(
+                        "{} {}",
+                        self.i18n.profile_not_found(),
+                        self.i18n.profile_refresh_hint()
+                    ));
+                    return;
+                }
+
+                let preferred_profile = self
+                    .settings
+                    .aws_profile
+                    .clone()
+                    .or_else(|| {
+                        std::env::var("AWS_PROFILE")
+                            .ok()
+                            .filter(|value| !value.trim().is_empty())
+                    })
+                    .or_else(|| {
+                        std::env::var("AWS_DEFAULT_PROFILE")
+                            .ok()
+                            .filter(|value| !value.trim().is_empty())
+                    });
+
+                if let Some(profile) = preferred_profile
+                    && let Some(index) = self
+                        .available_profiles
+                        .iter()
+                        .position(|item| item == &profile)
+                {
+                    self.selected_profile_index = index;
+                }
+
+                if !self
+                    .login_error
+                    .as_deref()
+                    .is_some_and(|message| is_login_required_message(message, &self.i18n))
+                {
+                    self.login_error = None;
+                }
+            }
+            Err(err) => {
+                self.available_profiles.clear();
+                self.selected_profile_index = 0;
+                self.login_info = None;
+                self.login_error = Some(err);
+            }
+        }
+    }
+
+    pub fn select_current_profile_and_login(&mut self) {
+        if self.available_profiles.is_empty() {
+            self.refresh_profiles();
+            return;
+        }
+
+        if self.selected_profile_index >= self.available_profiles.len() {
+            self.selected_profile_index = 0;
+        }
+
+        let Some(profile) = self
+            .available_profiles
+            .get(self.selected_profile_index)
+            .cloned()
+        else {
+            return;
+        };
+
+        aws_cli::set_aws_profile(&profile);
+        self.settings.aws_profile = Some(profile.clone());
+        if let Err(error) = save_settings(&self.settings) {
+            tracing::warn!(error = %error, profile = %profile, "Failed to persist selected profile");
+        }
+
+        self.login_error = None;
+        self.check_login();
+    }
+
     pub fn check_login(&mut self) {
+        self.message.clear();
+        self.last_login_check = Some(Instant::now());
         match aws_cli::check_aws_login() {
             Ok(info) => {
                 self.login_info = Some(info);
+                self.login_error = None;
                 self.screen = Screen::BlueprintSelect;
+                tracing::info!("Login check passed; screen moved to BlueprintSelect");
             }
             Err(e) => {
-                self.login_error = Some(e);
+                tracing::warn!(code = ?e.code, detail = %e.detail, "Login check failed");
+                if is_login_required_error(&e) {
+                    self.login_info = None;
+                    self.screen = Screen::Login;
+                    self.login_error = Some(auth_error_message(&e, &self.i18n));
+                    tracing::warn!("Login required; screen moved to Login");
+                } else {
+                    self.login_info = None;
+                    self.login_error = None;
+                    self.screen = Screen::BlueprintSelect;
+                    self.message = auth_error_message(&e, &self.i18n);
+                    tracing::warn!("Login check degraded (non-auth error); keeping app accessible");
+                }
             }
         }
+    }
+
+    pub fn validate_login_for_session(&mut self) {
+        if self.screen == Screen::Login {
+            return;
+        }
+
+        let need_check = match self.last_login_check {
+            Some(last_checked_at) => last_checked_at.elapsed() >= LOGIN_SESSION_CHECK_INTERVAL,
+            None => true,
+        };
+
+        if !need_check {
+            return;
+        }
+
+        self.last_login_check = Some(Instant::now());
+        match aws_cli::check_aws_login() {
+            Ok(info) => {
+                self.login_info = Some(info);
+                self.login_error = None;
+                if is_aws_credential_message(&self.message, &self.i18n) {
+                    self.message.clear();
+                }
+            }
+            Err(e) => {
+                tracing::warn!(code = ?e.code, detail = %e.detail, "Session login check failed");
+                if is_login_required_error(&e) {
+                    self.login_info = None;
+                    self.login_error = Some(auth_error_message(&e, &self.i18n));
+                    self.screen = Screen::Login;
+                    self.refresh_profiles();
+                    tracing::warn!(
+                        "Session check failed with auth error; returning to profile select"
+                    );
+                } else {
+                    self.message = auth_error_message(&e, &self.i18n);
+                    tracing::warn!(
+                        "Session check degraded (non-auth error); staying on current screen"
+                    );
+                }
+            }
+        }
+    }
+
+    pub fn check_login_if_needed_for_current_screen(&mut self) {
+        if self.screen == Screen::Login {
+            return;
+        }
+        self.validate_login_for_session();
     }
 
     pub fn select_region(&mut self) {
@@ -302,7 +498,7 @@ impl App {
     // Blueprint methods
     pub fn save_blueprints(&mut self) {
         if save_blueprints(&self.blueprint_store).is_err() {
-            self.message = "Save failed".to_string();
+            self.message = self.i18n.blueprint_save_failed().to_string();
         } else {
             self.message = self.i18n.blueprint_saved().to_string();
         }
@@ -439,12 +635,14 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::{App, LoadingProgress, REGIONS, Region};
-    use crate::aws_cli::{
-        AsgDetail, EcrDetail, Ec2Detail, EipDetail, LoadBalancerDetail, NatDetail, NetworkDetail,
-        RouteTableDetail, ScalingPolicy, SecurityGroupDetail, SecurityRule, TargetGroupInfo,
-    };
     use crate::aws_cli::iam::{AttachedPolicy, IamRoleDetail, InlinePolicy};
+    use crate::aws_cli::{
+        AsgDetail, AwsAuthError, AwsAuthErrorCode, Ec2Detail, EcrDetail, EipDetail,
+        LoadBalancerDetail, NatDetail, NetworkDetail, RouteTableDetail, ScalingPolicy,
+        SecurityGroupDetail, SecurityRule, TargetGroupInfo,
+    };
     use crate::blueprint::{Blueprint, BlueprintResource, ResourceType};
+    use crate::i18n::I18n;
 
     fn sample_ec2_detail() -> Ec2Detail {
         Ec2Detail {
@@ -627,6 +825,39 @@ mod tests {
         assert!(!p.route_tables);
         assert!(!p.eips);
         assert!(!p.dns_attrs);
+    }
+
+    #[test]
+    fn login_required_error_detector_matches_auth_codes() {
+        assert!(super::is_login_required_error(&AwsAuthError {
+            code: AwsAuthErrorCode::CredentialsLoadFailed,
+            detail: "fail".to_string(),
+        }));
+        assert!(super::is_login_required_error(&AwsAuthError {
+            code: AwsAuthErrorCode::CallerIdentityFailed,
+            detail: "fail".to_string(),
+        }));
+        assert!(!super::is_login_required_error(&AwsAuthError {
+            code: AwsAuthErrorCode::Network,
+            detail: "network".to_string(),
+        }));
+    }
+
+    #[test]
+    fn aws_credential_message_detector_matches_expected_messages() {
+        let i18n = I18n::new(crate::i18n::Language::English);
+        assert!(super::is_aws_credential_message(
+            i18n.auth_network_error(),
+            &i18n
+        ));
+        assert!(super::is_aws_credential_message(
+            i18n.auth_unknown_error(),
+            &i18n
+        ));
+        assert!(!super::is_aws_credential_message(
+            "Save complete: output.md",
+            &i18n
+        ));
     }
 
     #[test]

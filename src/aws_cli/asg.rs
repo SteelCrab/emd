@@ -1,4 +1,5 @@
 pub use crate::aws_cli::asg_sdk::{get_asg_detail, list_auto_scaling_groups};
+use crate::i18n::{I18n, Language};
 
 #[derive(Debug, Clone)]
 pub struct ScalingPolicy {
@@ -32,40 +33,67 @@ pub struct AsgDetail {
 }
 
 impl AsgDetail {
-    pub fn to_markdown(&self) -> String {
+    pub fn to_markdown(&self, lang: Language) -> String {
+        let i18n = I18n::new(lang);
         let mut lines = vec![
-            format!("## Auto Scaling Group ({})\n", self.name),
-            "| 항목 | 값 |".to_string(),
+            format!("## {} ({})\n", i18n.auto_scaling_group(), self.name),
+            format!("| {} | {} |", i18n.item(), i18n.value()),
             "|:---|:---|".to_string(),
-            format!("| 이름 | {} |", self.name),
+            format!("| {} | {} |", i18n.md_name(), self.name),
         ];
 
         // Launch Template or Config
         if let Some(ref lt_name) = self.launch_template_name {
             if let Some(ref lt_id) = self.launch_template_id {
-                lines.push(format!("| 시작 템플릿 | {} (`{}`) |", lt_name, lt_id));
+                lines.push(format!(
+                    "| {} | {} (`{}`) |",
+                    i18n.asg_launch_template(),
+                    lt_name,
+                    lt_id
+                ));
             } else {
-                lines.push(format!("| 시작 템플릿 | {} |", lt_name));
+                lines.push(format!("| {} | {} |", i18n.asg_launch_template(), lt_name));
             }
         } else if let Some(ref lc_name) = self.launch_config_name {
-            lines.push(format!("| 시작 구성 | {} |", lc_name));
+            lines.push(format!(
+                "| {} | {} |",
+                i18n.asg_launch_configuration(),
+                lc_name
+            ));
         }
 
-        lines.push(format!("| 최소 크기 | {} |", self.min_size));
-        lines.push(format!("| 최대 크기 | {} |", self.max_size));
-        lines.push(format!("| 원하는 용량 | {} |", self.desired_capacity));
-        lines.push(format!("| 기본 쿨다운 | {}초 |", self.default_cooldown));
-        lines.push(format!("| 헬스 체크 유형 | {} |", self.health_check_type));
+        lines.push(format!("| {} | {} |", i18n.asg_min_size(), self.min_size));
+        lines.push(format!("| {} | {} |", i18n.asg_max_size(), self.max_size));
         lines.push(format!(
-            "| 헬스 체크 유예 기간 | {}초 |",
-            self.health_check_grace_period
+            "| {} | {} |",
+            i18n.asg_desired_capacity(),
+            self.desired_capacity
         ));
-        lines.push(format!("| 생성일 | {} |", self.created_time));
+        lines.push(format!(
+            "| {} | {} |",
+            i18n.asg_default_cooldown(),
+            i18n.asg_seconds(self.default_cooldown)
+        ));
+        lines.push(format!(
+            "| {} | {} |",
+            i18n.asg_health_check_type(),
+            self.health_check_type
+        ));
+        lines.push(format!(
+            "| {} | {} |",
+            i18n.asg_health_check_grace_period(),
+            i18n.asg_seconds(self.health_check_grace_period)
+        ));
+        lines.push(format!(
+            "| {} | {} |",
+            i18n.asg_created_at(),
+            self.created_time
+        ));
 
         // Availability Zones
         if !self.availability_zones.is_empty() {
             lines.push(String::new());
-            lines.push("### 가용 영역\n".to_string());
+            lines.push(format!("### {}\n", i18n.asg_availability_zones()));
             for az in &self.availability_zones {
                 lines.push(format!("- {}", az));
             }
@@ -74,8 +102,11 @@ impl AsgDetail {
         // Instances
         if !self.instances.is_empty() {
             lines.push(String::new());
-            lines.push(format!("### 인스턴스 ({} 개)\n", self.instances.len()));
-            lines.push("| 인스턴스 ID |".to_string());
+            lines.push(format!(
+                "### {}\n",
+                i18n.asg_instances_with_count(self.instances.len())
+            ));
+            lines.push(format!("| {} |", i18n.asg_instance_id()));
             lines.push("|:---|".to_string());
             for inst in &self.instances {
                 lines.push(format!("| `{}` |", inst));
@@ -85,7 +116,7 @@ impl AsgDetail {
         // Target Groups
         if !self.target_group_arns.is_empty() {
             lines.push(String::new());
-            lines.push("### 대상 그룹\n".to_string());
+            lines.push(format!("### {}\n", i18n.asg_target_groups()));
             for tg in &self.target_group_arns {
                 let tg_name = tg.split('/').nth(1).unwrap_or(tg);
                 lines.push(format!("- {}", tg_name));
@@ -95,8 +126,15 @@ impl AsgDetail {
         // Scaling Policies
         if !self.scaling_policies.is_empty() {
             lines.push(String::new());
-            lines.push("### 조정 정책\n".to_string());
-            lines.push("| 이름 | 유형 | 조정 유형 | 조정 값 | 쿨다운 |".to_string());
+            lines.push(format!("### {}\n", i18n.asg_scaling_policies()));
+            lines.push(format!(
+                "| {} | {} | {} | {} | {} |",
+                i18n.md_name(),
+                i18n.asg_policy_type(),
+                i18n.asg_adjustment_type(),
+                i18n.asg_adjustment_value(),
+                i18n.asg_cooldown()
+            ));
             lines.push("|:---|:---|:---|:---|:---|".to_string());
             for policy in &self.scaling_policies {
                 let adj_type = policy.adjustment_type.as_deref().unwrap_or("-");
@@ -106,7 +144,7 @@ impl AsgDetail {
                     .unwrap_or("-".to_string());
                 let cooldown = policy
                     .cooldown
-                    .map(|v| format!("{}초", v))
+                    .map(|v| i18n.asg_seconds(v))
                     .unwrap_or("-".to_string());
                 lines.push(format!(
                     "| {} | {} | {} | {} | {} |",
@@ -118,8 +156,8 @@ impl AsgDetail {
         // Tags
         if !self.tags.is_empty() {
             lines.push(String::new());
-            lines.push("### 태그\n".to_string());
-            lines.push("| 키 | 값 |".to_string());
+            lines.push(format!("### {}\n", i18n.asg_tags()));
+            lines.push(format!("| {} | {} |", i18n.asg_key(), i18n.value()));
             lines.push("|:---|:---|".to_string());
             for (key, value) in &self.tags {
                 if key != "Name" {
@@ -136,6 +174,7 @@ impl AsgDetail {
 #[cfg(test)]
 mod tests {
     use super::{AsgDetail, ScalingPolicy};
+    use crate::i18n::Language;
 
     fn sample_asg_detail() -> AsgDetail {
         AsgDetail {
@@ -173,7 +212,7 @@ mod tests {
     #[test]
     fn scenario_asg_markdown_launch_template_render() {
         let detail = sample_asg_detail();
-        let markdown = detail.to_markdown();
+        let markdown = detail.to_markdown(Language::Korean);
         assert!(markdown.contains("| 시작 템플릿 | lt-web (`lt-0123456789abcdef0`) |"));
     }
 
@@ -183,35 +222,35 @@ mod tests {
         detail.launch_template_name = None;
         detail.launch_template_id = None;
         detail.launch_config_name = Some("legacy-launch-config".to_string());
-        let markdown = detail.to_markdown();
+        let markdown = detail.to_markdown(Language::Korean);
         assert!(markdown.contains("| 시작 구성 | legacy-launch-config |"));
     }
 
     #[test]
     fn scenario_asg_markdown_instances_section_count() {
         let detail = sample_asg_detail();
-        let markdown = detail.to_markdown();
+        let markdown = detail.to_markdown(Language::Korean);
         assert!(markdown.contains("### 인스턴스 (2 개)"));
     }
 
     #[test]
     fn scenario_asg_markdown_target_group_name_extraction() {
         let detail = sample_asg_detail();
-        let markdown = detail.to_markdown();
+        let markdown = detail.to_markdown(Language::Korean);
         assert!(markdown.contains("- web-blue"));
     }
 
     #[test]
     fn scenario_asg_markdown_scaling_policy_table() {
         let detail = sample_asg_detail();
-        let markdown = detail.to_markdown();
+        let markdown = detail.to_markdown(Language::Korean);
         assert!(markdown.contains("| scale-out | SimpleScaling | ChangeInCapacity | 1 | 60초 |"));
     }
 
     #[test]
     fn scenario_asg_markdown_tag_name_filtered() {
         let detail = sample_asg_detail();
-        let markdown = detail.to_markdown();
+        let markdown = detail.to_markdown(Language::Korean);
         assert!(markdown.contains("| Env | prod |"));
         assert!(!markdown.contains("| Name | asg-prod |"));
     }
@@ -225,7 +264,7 @@ mod tests {
         detail.scaling_policies.clear();
         detail.tags.clear();
 
-        let markdown = detail.to_markdown();
+        let markdown = detail.to_markdown(Language::Korean);
         assert!(!markdown.contains("### 가용 영역"));
         assert!(!markdown.contains("### 대상 그룹"));
         assert!(!markdown.contains("### 조정 정책"));

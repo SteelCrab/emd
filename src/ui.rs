@@ -80,7 +80,13 @@ fn draw_header(frame: &mut Frame, area: Rect) {
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let i = &app.i18n;
     let help = match &app.screen {
-        Screen::Login => format!("Enter: {} | q: {}", i.retry(), i.exit()),
+        Screen::Login => format!(
+            "↑↓/jk: {} | Enter: {} | r: {} | q: {}",
+            i.move_cursor(),
+            i.select(),
+            i.refresh(),
+            i.exit()
+        ),
         Screen::BlueprintSelect => format!(
             "↑↓/jk: {} | Enter: {} | g: {} | d: {} | s: {} | ►: {} | q: {}",
             i.move_cursor(),
@@ -365,48 +371,74 @@ fn draw_vpc_loading_checklist(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_login(frame: &mut Frame, app: &App, area: Rect) {
     let i = &app.i18n;
-    let content = if let Some(ref info) = app.login_info {
-        vec![
-            Line::from(Span::styled(
-                i.aws_login_verified(),
-                Style::default().fg(Color::Green),
-            )),
-            Line::from(""),
-            Line::from(info.as_str()),
-        ]
-    } else if let Some(ref err) = app.login_error {
-        vec![
-            Line::from(Span::styled(
-                i.aws_login_required(),
-                Style::default().fg(Color::Red),
-            )),
-            Line::from(""),
-            Line::from(err.as_str()),
-            Line::from(""),
-            Line::from(i.aws_configure_hint()),
-        ]
-    } else {
-        vec![Line::from(i.aws_login_checking())]
-    };
+    let mut content = vec![Line::from("")];
 
-    let mut login_content = vec![Line::from("")];
-
-    for line in EMD_LOGO.lines() {
-        login_content.push(Line::from(Span::styled(
-            line,
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+    if let Some(error) = app.login_error.as_ref() {
+        content.push(Line::from(Span::styled(
+            i.aws_login_required(),
+            Style::default().fg(Color::Red),
         )));
+        content.push(Line::from(""));
+        let display_error = if error.to_lowercase().contains("an error") {
+            i.aws_login_retry_hint()
+        } else {
+            error.as_str()
+        };
+        content.push(Line::from(Span::styled(
+            display_error,
+            Style::default().fg(Color::Red),
+        )));
+        content.push(Line::from(""));
     }
 
-    login_content.push(Line::from(""));
-    login_content.extend(content);
+    if app.available_profiles.is_empty() {
+        content.push(Line::from(i.aws_login_checking()));
+        content.push(Line::from(""));
+        content.push(Line::from(i.profile_not_found()));
+        content.push(Line::from(i.profile_refresh_hint()));
+        content.push(Line::from(i.aws_configure_hint()));
+    } else {
+        content.push(Line::from(Span::styled(
+            i.aws_login_verified(),
+            Style::default().fg(Color::Green),
+        )));
+        content.push(Line::from(""));
+        content.push(Line::from(i.profile_select_prompt()));
+        content.push(Line::from(""));
 
-    let title = format!(" {} ", i.login());
-    let para = Paragraph::new(login_content)
-        .block(Block::default().title(title).borders(Borders::ALL))
-        .alignment(Alignment::Center);
+        for (index, profile) in app.available_profiles.iter().enumerate() {
+            let selected = index == app.selected_profile_index;
+            let prefix = if selected { "▶ " } else { "  " };
+            let style = if selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            content.push(Line::from(Span::styled(
+                format!("{prefix}{profile}"),
+                style,
+            )));
+        }
+
+        if let Some(info) = app.login_info.as_ref() {
+            content.push(Line::from(""));
+            content.push(Line::from(Span::styled(
+                info.as_str(),
+                Style::default().fg(Color::Green),
+            )));
+        }
+    }
+
+    let para = Paragraph::new(content)
+        .block(
+            Block::default()
+                .title(format!(" {} ", i.login()))
+                .borders(Borders::ALL),
+        )
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: false });
     frame.render_widget(para, area);
 }
 

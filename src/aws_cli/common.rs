@@ -1,9 +1,36 @@
+use aws_credential_types::provider::ProvideCredentials;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 use tokio::runtime::Runtime;
 
 static REGION: Mutex<Option<String>> = Mutex::new(None);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AwsAuthErrorCode {
+    CredentialsProviderMissing,
+    CredentialsLoadFailed,
+    CallerIdentityFailed,
+    Network,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AwsAuthError {
+    pub code: AwsAuthErrorCode,
+    pub detail: String,
+}
+
+impl AwsAuthError {
+    fn new(code: AwsAuthErrorCode, detail: impl Into<String>) -> Self {
+        Self {
+            code,
+            detail: detail.into(),
+        }
+    }
+}
 
 pub fn set_region(region: &str) {
     if let Ok(mut r) = REGION.lock() {
@@ -11,7 +38,87 @@ pub fn set_region(region: &str) {
     }
 }
 
-#[derive(Debug, Clone)]
+pub fn set_aws_profile(profile: &str) {
+    let profile = profile.trim();
+    if profile.is_empty() {
+        unsafe {
+            std::env::remove_var("AWS_PROFILE");
+            std::env::remove_var("AWS_DEFAULT_PROFILE");
+        }
+        return;
+    }
+
+    unsafe {
+        std::env::set_var("AWS_PROFILE", profile);
+        std::env::set_var("AWS_DEFAULT_PROFILE", profile);
+    }
+}
+
+pub fn list_aws_profiles() -> Result<Vec<String>, String> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| "Home directory not found; cannot read AWS profile files.".to_string())?;
+    let mut profiles = BTreeSet::new();
+    let mut had_profile_source = false;
+
+    let config_path = home.join(".aws").join("config");
+    if config_path.exists() {
+        had_profile_source = true;
+        let content = std::fs::read_to_string(&config_path)
+            .map_err(|e| format!("Failed to read {}: {}", config_path.display(), e))?;
+        parse_profile_sections(&content, true, &mut profiles);
+    }
+
+    let credentials_path = home.join(".aws").join("credentials");
+    if credentials_path.exists() {
+        had_profile_source = true;
+        let content = std::fs::read_to_string(&credentials_path)
+            .map_err(|e| format!("Failed to read {}: {}", credentials_path.display(), e))?;
+        parse_profile_sections(&content, false, &mut profiles);
+    }
+
+    if !had_profile_source {
+        return Ok(Vec::new());
+    }
+
+    Ok(profiles.into_iter().collect())
+}
+
+fn parse_profile_sections(contents: &str, from_config: bool, profiles: &mut BTreeSet<String>) {
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if !line.starts_with('[') || !line.ends_with(']') {
+            continue;
+        }
+
+        let section = line
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .trim()
+            .to_string();
+        if section.is_empty() {
+            continue;
+        }
+
+        if from_config {
+            if section == "default" {
+                profiles.insert("default".to_string());
+                continue;
+            }
+
+            if let Some(name) = section.strip_prefix("profile ") {
+                let name = name.trim();
+                if !name.is_empty() {
+                    profiles.insert(name.to_string());
+                }
+            }
+            continue;
+        }
+
+        profiles.insert(section);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct AwsResource {
     pub name: String,
     pub id: String,
@@ -39,14 +146,60 @@ pub struct Tag {
 
 pub fn run_aws_cli(args: &[&str]) -> Option<String> {
     if args.len() < 2 {
+        tracing::warn!(
+            args_len = args.len(),
+            "run_aws_cli called with insufficient arguments"
+        );
         return None;
     }
 
     let service = args[0];
     let operation = args[1];
+    let request_args = args.join(" ");
+    let started_at = Instant::now();
+    let profile_name = std::env::var("AWS_PROFILE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("AWS_DEFAULT_PROFILE")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "default".to_string());
 
-    get_runtime().block_on(async {
+    tracing::info!(
+        service = %service,
+        operation = %operation,
+        args = %request_args,
+        "AWS CLI emulation request start"
+    );
+
+    let result = get_runtime().block_on(async {
         let config = get_sdk_config().await;
+        let region = config
+            .region()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        tracing::debug!(
+            profile = %profile_name,
+            region = %region,
+            "AWS SDK config loaded for emulation request"
+        );
+
+        if let Some(credentials_provider) = config.credentials_provider()
+            && let Err(error) = credentials_provider.provide_credentials().await
+        {
+            tracing::error!(
+                error = %error,
+                profile = %profile_name,
+                region = %region,
+                service = %service,
+                operation = %operation,
+                args = %request_args,
+                "AWS credential provider unavailable; skipping SDK request"
+            );
+            return None;
+        }
 
         match service {
             "ec2" => run_ec2_request(&config, operation, args).await,
@@ -54,25 +207,173 @@ pub fn run_aws_cli(args: &[&str]) -> Option<String> {
             "elbv2" => run_elbv2_request(&config, operation, args).await,
             "iam" => run_iam_request(&config, operation, args).await,
             "sts" => run_sts_request(&config, operation).await,
-            _ => None,
+            _ => {
+                tracing::warn!(
+                    service = %service,
+                    operation = %operation,
+                    "Unsupported AWS service requested"
+                );
+                None
+            }
         }
-    })
+    });
+
+    let elapsed_ms = started_at.elapsed().as_millis();
+    if let Some(ref output) = result {
+        tracing::debug!(
+            service = %service,
+            operation = %operation,
+            bytes = output.len(),
+            elapsed_ms,
+            "AWS CLI emulation request success"
+        );
+    } else {
+        tracing::warn!(
+            service = %service,
+            operation = %operation,
+            args = %request_args,
+            elapsed_ms,
+            "AWS CLI emulation request returned no result"
+        );
+    }
+
+    result
 }
 
-pub fn check_aws_login() -> Result<String, String> {
+pub fn check_aws_login() -> Result<String, AwsAuthError> {
+    let started_at = std::time::Instant::now();
     get_runtime().block_on(async {
+        tracing::info!("AWS login check started");
         let config = get_sdk_config().await;
+        let region = config
+            .region()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let profile = std::env::var("AWS_PROFILE")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                std::env::var("AWS_DEFAULT_PROFILE")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            })
+            .unwrap_or_else(|| "default".to_string());
+        let region_from_env = std::env::var("AWS_REGION")
+            .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
+            .unwrap_or_else(|_| "-".to_string());
+        let has_static_credentials = std::env::var("AWS_ACCESS_KEY_ID").is_ok()
+            || std::env::var("AWS_SECRET_ACCESS_KEY").is_ok()
+            || std::env::var("AWS_SESSION_TOKEN").is_ok();
+        tracing::debug!(
+            profile = %profile,
+            region = %region,
+            sdk_region = %region,
+            region_from_env = %region_from_env,
+            has_static_credentials = has_static_credentials,
+            "AWS SDK config loaded for login check"
+        );
+
+        let credentials_provider = config.credentials_provider().ok_or_else(|| {
+            tracing::warn!(
+                profile = %profile,
+                region = %region,
+                "AWS login check failed: no credential provider found"
+            );
+            AwsAuthError::new(
+                AwsAuthErrorCode::CredentialsProviderMissing,
+                "no credential provider found",
+            )
+        })?;
+
+        if let Err(error) = credentials_provider.provide_credentials().await {
+            tracing::warn!(
+                error = %error,
+                profile = %profile,
+                "AWS credential provider validation failed"
+            );
+            return Err(AwsAuthError::new(
+                AwsAuthErrorCode::CredentialsLoadFailed,
+                error.to_string(),
+            ));
+        }
+        tracing::debug!("AWS credential provider returned credentials");
+
         let client = aws_sdk_sts::Client::new(&config);
 
         match client.get_caller_identity().send().await {
             Ok(output) => {
                 let account = output.account().unwrap_or_default();
                 let arn = output.arn().unwrap_or_default();
+                let elapsed_ms = started_at.elapsed().as_millis();
+                tracing::info!(
+                    account = %account,
+                    arn = %arn,
+                    profile = %profile,
+                    elapsed_ms = elapsed_ms,
+                    "AWS caller identity verified"
+                );
                 Ok(format!("{} ({})", account, arn))
             }
-            Err(e) => Err(format!("AWS 로그인 필요: {}", e)),
+            Err(e) => {
+                let elapsed_ms = started_at.elapsed().as_millis();
+                let error_text = e.to_string();
+                tracing::warn!(
+                    profile = %profile,
+                    region = %region,
+                    error = %e,
+                    elapsed_ms = elapsed_ms,
+                    "Caller identity check failed"
+                );
+                if is_auth_failure_error(&error_text) {
+                    Err(AwsAuthError::new(
+                        AwsAuthErrorCode::CallerIdentityFailed,
+                        error_text,
+                    ))
+                } else {
+                    let code = if is_network_error(&error_text) {
+                        AwsAuthErrorCode::Network
+                    } else {
+                        AwsAuthErrorCode::Unknown
+                    };
+                    Err(AwsAuthError::new(code, error_text))
+                }
+            }
         }
     })
+}
+
+fn is_auth_failure_error(error_text: &str) -> bool {
+    let lower = error_text.to_ascii_lowercase();
+    const AUTH_MARKERS: [&str; 11] = [
+        "expiredtoken",
+        "accessdenied",
+        "access denied",
+        "invalidclienttokenid",
+        "unrecognizedclientexception",
+        "signaturedoesnotmatch",
+        "security token included in the request is invalid",
+        "failed to refresh cached login token",
+        "refresh token has expired",
+        "token has expired",
+        "unauthorized",
+    ];
+    AUTH_MARKERS.iter().any(|marker| lower.contains(marker))
+}
+
+fn is_network_error(error_text: &str) -> bool {
+    let lower = error_text.to_ascii_lowercase();
+    const NETWORK_MARKERS: [&str; 9] = [
+        "could not connect",
+        "connection refused",
+        "connection reset",
+        "timed out",
+        "timeout",
+        "dns error",
+        "name or service not known",
+        "dispatch failure",
+        "network is unreachable",
+    ];
+    NETWORK_MARKERS.iter().any(|marker| lower.contains(marker))
 }
 
 fn arg_value<'a>(args: &'a [&str], flag: &str) -> Option<&'a str> {
@@ -172,7 +473,17 @@ async fn ec2_describe_instances(client: &aws_sdk_ec2::Client, args: &[&str]) -> 
         req = req.instance_ids(instance_id);
     }
 
-    let output = req.send().await.ok()?;
+    let output = match req.send().await {
+        Ok(output) => output,
+        Err(error) => {
+            tracing::error!(
+                error = %error,
+                args = %args.join(" "),
+                "describe-instances API call failed"
+            );
+            return None;
+        }
+    };
     ec2_describe_instances_output(output.reservations(), arg_value(args, "--query"))
 }
 
@@ -396,7 +707,18 @@ async fn ec2_describe_vpcs(client: &aws_sdk_ec2::Client, args: &[&str]) -> Optio
         req = req.vpc_ids(vpc_id);
     }
 
-    let output = req.send().await.ok()?;
+    let output = match req.send().await {
+        Ok(output) => output,
+        Err(error) => {
+            tracing::error!(
+                error = %error,
+                vpc_id = arg_value(args, "--vpc-ids"),
+                query = arg_value(args, "--query"),
+                "describe-vpcs API call failed"
+            );
+            return None;
+        }
+    };
     ec2_describe_vpcs_output(output.vpcs(), arg_value(args, "--query"))
 }
 
@@ -444,7 +766,17 @@ async fn ec2_describe_subnets(client: &aws_sdk_ec2::Client, args: &[&str]) -> Op
         req = req.subnet_ids(subnet_id);
     }
 
-    let output = req.send().await.ok()?;
+    let output = match req.send().await {
+        Ok(output) => output,
+        Err(error) => {
+            tracing::error!(
+                error = %error,
+                subnet_id = arg_value(args, "--subnet-ids"),
+                "describe-subnets API call failed"
+            );
+            return None;
+        }
+    };
     ec2_describe_subnets_output(output.subnets())
 }
 
@@ -495,11 +827,19 @@ async fn ec2_describe_internet_gateways(
         req = req.filters(filter);
     }
 
-    let output = req.send().await.ok()?;
-    ec2_describe_internet_gateways_output(
-        output.internet_gateways(),
-        arg_value(args, "--query"),
-    )
+    let output = match req.send().await {
+        Ok(output) => output,
+        Err(error) => {
+            tracing::error!(
+                error = %error,
+                filter = arg_value(args, "--filters"),
+                query = arg_value(args, "--query"),
+                "describe-internet-gateways API call failed"
+            );
+            return None;
+        }
+    };
+    ec2_describe_internet_gateways_output(output.internet_gateways(), arg_value(args, "--query"))
 }
 
 fn ec2_describe_internet_gateways_output(
@@ -571,7 +911,17 @@ async fn ec2_describe_nat_gateways(client: &aws_sdk_ec2::Client, args: &[&str]) 
         req = req.filter(filter);
     }
 
-    let output = req.send().await.ok()?;
+    let output = match req.send().await {
+        Ok(output) => output,
+        Err(error) => {
+            tracing::error!(
+                error = %error,
+                filter = filter_value,
+                "describe-nat-gateways API call failed"
+            );
+            return None;
+        }
+    };
     ec2_describe_nat_gateways_output(output.nat_gateways())
 }
 
@@ -620,7 +970,18 @@ async fn ec2_describe_route_tables(client: &aws_sdk_ec2::Client, args: &[&str]) 
         req = req.filters(filter);
     }
 
-    let output = req.send().await.ok()?;
+    let output = match req.send().await {
+        Ok(output) => output,
+        Err(error) => {
+            tracing::error!(
+                error = %error,
+                filter = arg_value(args, "--filters"),
+                query = arg_value(args, "--query"),
+                "describe-route-tables API call failed"
+            );
+            return None;
+        }
+    };
     ec2_describe_route_tables_output(output.route_tables(), arg_value(args, "--query"))
 }
 
@@ -710,9 +1071,7 @@ async fn ec2_describe_addresses(client: &aws_sdk_ec2::Client) -> Option<String> 
     ec2_describe_addresses_output(output.addresses())
 }
 
-fn ec2_describe_addresses_output(
-    addresses: &[aws_sdk_ec2::types::Address],
-) -> Option<String> {
+fn ec2_describe_addresses_output(addresses: &[aws_sdk_ec2::types::Address]) -> Option<String> {
     let addresses = addresses
         .iter()
         .map(|address| {
@@ -1037,10 +1396,7 @@ async fn elbv2_describe_load_balancers(
 fn elbv2_describe_load_balancers_output(
     load_balancers: &[aws_sdk_elasticloadbalancingv2::types::LoadBalancer],
 ) -> Option<String> {
-    let mut load_balancers = load_balancers
-        .iter()
-        .map(lb_to_json)
-        .collect::<Vec<_>>();
+    let mut load_balancers = load_balancers.iter().map(lb_to_json).collect::<Vec<_>>();
 
     load_balancers.sort_by(|a, b| {
         let a_name = a
@@ -1458,16 +1814,38 @@ pub fn get_runtime() -> &'static Runtime {
 
 /// Get AWS SDK config with profile-based credentials and region
 pub async fn get_sdk_config() -> aws_config::SdkConfig {
-    let profile_name = std::env::var("AWS_PROFILE").unwrap_or_else(|_| "default".to_string());
+    let mut config_loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
 
-    let mut config_loader =
-        aws_config::defaults(aws_config::BehaviorVersion::latest()).profile_name(&profile_name);
+    let profile_name = std::env::var("AWS_PROFILE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("AWS_DEFAULT_PROFILE")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .or_else(|| Some("default".to_string()));
 
-    // Get region from REGION mutex if set
-    if let Ok(r) = REGION.lock()
-        && let Some(ref region_str) = *r
+    if let Some(profile_name) = profile_name.as_deref() {
+        config_loader = config_loader.profile_name(profile_name);
+    }
+
+    let region_env = std::env::var("AWS_REGION")
+        .ok()
+        .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok());
+
+    if let Ok(region) = REGION.lock() {
+        if let Some(ref region_str) = *region {
+            config_loader = config_loader.region(aws_config::Region::new(region_str.clone()));
+        } else if let Some(region_str) = region_env {
+            config_loader = config_loader.region(aws_config::Region::new(region_str));
+        }
+    }
+
+    if let Ok(region) = REGION.lock()
+        && region.is_none()
     {
-        config_loader = config_loader.region(aws_config::Region::new(region_str.clone()));
+        config_loader = config_loader.region(aws_config::Region::new("us-east-1"));
     }
 
     config_loader.load().await
@@ -1485,17 +1863,33 @@ mod tests {
         elbv2_describe_load_balancers_output, elbv2_describe_target_groups_output,
         elbv2_describe_target_health_output, extract_json_value, extract_tags,
         iam_get_role_policy_output, iam_list_attached_role_policies_output,
-        iam_list_role_policies_output, lb_to_json, parse_filter_value, parse_ip_permissions,
-        parse_name_tag, parse_policy_json, parse_resources_from_json, parse_tags_ec2,
-        parse_tags_iam, target_group_to_json, value_to_json_string,
+        iam_list_role_policies_output, is_auth_failure_error, lb_to_json, parse_filter_value,
+        parse_ip_permissions, parse_name_tag, parse_policy_json, parse_resources_from_json,
+        parse_tags_ec2, parse_tags_iam, target_group_to_json, value_to_json_string,
     };
     use serde_json::Value;
+
+    #[test]
+    fn auth_failure_detector_matches_known_auth_errors() {
+        let message = "AccessDeniedException: The refresh token has expired.";
+        assert!(is_auth_failure_error(message));
+    }
+
+    #[test]
+    fn auth_failure_detector_ignores_endpoint_connectivity_errors() {
+        let message =
+            "Could not connect to the endpoint URL: https://sts.ap-southeast-1.amazonaws.com/";
+        assert!(!is_auth_failure_error(message));
+    }
 
     #[test]
     fn scenario_lt_filter_parser_multivalue() {
         let raw = "Name=attachment.vpc-id,Values=vpc-11111111,vpc-22222222,vpc-33333333";
         let value = parse_filter_value(raw, "attachment.vpc-id");
-        assert_eq!(value, Some("vpc-11111111,vpc-22222222,vpc-33333333".to_string()));
+        assert_eq!(
+            value,
+            Some("vpc-11111111,vpc-22222222,vpc-33333333".to_string())
+        );
     }
 
     #[test]
@@ -1625,7 +2019,10 @@ mod tests {
         let default_output =
             ec2_describe_instances_output(&reservations, None).expect("default output");
         let default_json: Value = serde_json::from_str(&default_output).expect("valid json");
-        assert_eq!(default_json["Reservations"][0]["Instances"][0]["InstanceId"], "i-aaaa");
+        assert_eq!(
+            default_json["Reservations"][0]["Instances"][0]["InstanceId"],
+            "i-aaaa"
+        );
         assert_eq!(
             default_json["Reservations"][0]["Instances"][0]["SecurityGroups"][0]["GroupId"],
             "sg-1111"
@@ -1667,8 +2064,8 @@ mod tests {
                 .build(),
         ];
 
-        let query_out = ec2_describe_vpcs_output(&vpcs, Some("Vpcs[*].[VpcId,Tags]"))
-            .expect("query vpcs");
+        let query_out =
+            ec2_describe_vpcs_output(&vpcs, Some("Vpcs[*].[VpcId,Tags]")).expect("query vpcs");
         let query_json: Value = serde_json::from_str(&query_out).expect("valid json");
         assert_eq!(query_json[0][0], "vpc-aaaa");
         assert_eq!(query_json[1][0], "vpc-bbbb");
@@ -1681,56 +2078,58 @@ mod tests {
 
     #[test]
     fn ec2_subnet_and_nat_gateway_outputs_render_expected_fields() {
-        let subnets = vec![aws_sdk_ec2::types::Subnet::builder()
-            .subnet_id("subnet-1")
-            .vpc_id("vpc-1")
-            .cidr_block("10.0.1.0/24")
-            .availability_zone("ap-northeast-2a")
-            .state(aws_sdk_ec2::types::SubnetState::Available)
-            .map_public_ip_on_launch(true)
-            .available_ip_address_count(251)
-            .tags(ec2_test_tag("Name", "public-a"))
-            .build()];
+        let subnets = vec![
+            aws_sdk_ec2::types::Subnet::builder()
+                .subnet_id("subnet-1")
+                .vpc_id("vpc-1")
+                .cidr_block("10.0.1.0/24")
+                .availability_zone("ap-northeast-2a")
+                .state(aws_sdk_ec2::types::SubnetState::Available)
+                .map_public_ip_on_launch(true)
+                .available_ip_address_count(251)
+                .tags(ec2_test_tag("Name", "public-a"))
+                .build(),
+        ];
         let subnets_out = ec2_describe_subnets_output(&subnets).expect("subnet output");
         let subnets_json: Value = serde_json::from_str(&subnets_out).expect("valid json");
         assert_eq!(subnets_json["Subnets"][0]["MapPublicIpOnLaunch"], true);
         assert_eq!(subnets_json["Subnets"][0]["AvailableIpAddressCount"], 251);
 
-        let nat_gateways = vec![aws_sdk_ec2::types::NatGateway::builder()
-            .nat_gateway_id("nat-1")
-            .subnet_id("subnet-1")
-            .state(aws_sdk_ec2::types::NatGatewayState::Available)
-            .connectivity_type(aws_sdk_ec2::types::ConnectivityType::Public)
-            .nat_gateway_addresses(
-                aws_sdk_ec2::types::NatGatewayAddress::builder()
-                    .allocation_id("eipalloc-1")
-                    .public_ip("52.0.0.1")
-                    .private_ip("10.0.1.10")
-                    .build(),
-            )
-            .tags(ec2_test_tag("Name", "nat-main"))
-            .build()];
+        let nat_gateways = vec![
+            aws_sdk_ec2::types::NatGateway::builder()
+                .nat_gateway_id("nat-1")
+                .subnet_id("subnet-1")
+                .state(aws_sdk_ec2::types::NatGatewayState::Available)
+                .connectivity_type(aws_sdk_ec2::types::ConnectivityType::Public)
+                .nat_gateway_addresses(
+                    aws_sdk_ec2::types::NatGatewayAddress::builder()
+                        .allocation_id("eipalloc-1")
+                        .public_ip("52.0.0.1")
+                        .private_ip("10.0.1.10")
+                        .build(),
+                )
+                .tags(ec2_test_tag("Name", "nat-main"))
+                .build(),
+        ];
         let nat_out = ec2_describe_nat_gateways_output(&nat_gateways).expect("nat output");
         let nat_json: Value = serde_json::from_str(&nat_out).expect("valid json");
         assert_eq!(nat_json["NatGateways"][0]["NatGatewayId"], "nat-1");
-        assert!(
-            nat_json["NatGateways"][0]
-                .get("AvailabilityMode")
-                .is_none()
-        );
+        assert!(nat_json["NatGateways"][0].get("AvailabilityMode").is_none());
     }
 
     #[test]
     fn ec2_gateway_route_address_and_sg_outputs_match_cli_shape() {
-        let igws = vec![aws_sdk_ec2::types::InternetGateway::builder()
-            .internet_gateway_id("igw-1")
-            .tags(ec2_test_tag("Name", "igw-main"))
-            .attachments(
-                aws_sdk_ec2::types::InternetGatewayAttachment::builder()
-                    .vpc_id("vpc-1")
-                    .build(),
-            )
-            .build()];
+        let igws = vec![
+            aws_sdk_ec2::types::InternetGateway::builder()
+                .internet_gateway_id("igw-1")
+                .tags(ec2_test_tag("Name", "igw-main"))
+                .attachments(
+                    aws_sdk_ec2::types::InternetGatewayAttachment::builder()
+                        .vpc_id("vpc-1")
+                        .build(),
+                )
+                .build(),
+        ];
         let igw_query = ec2_describe_internet_gateways_output(
             &igws,
             Some("InternetGateways[*].[InternetGatewayId,Tags,Attachments]"),
@@ -1739,22 +2138,24 @@ mod tests {
         let igw_query_json: Value = serde_json::from_str(&igw_query).expect("valid json");
         assert_eq!(igw_query_json[0][0], "igw-1");
 
-        let route_tables = vec![aws_sdk_ec2::types::RouteTable::builder()
-            .route_table_id("rtb-1")
-            .tags(ec2_test_tag("Name", "main-rt"))
-            .routes(
-                aws_sdk_ec2::types::Route::builder()
-                    .destination_cidr_block("0.0.0.0/0")
-                    .gateway_id("igw-1")
-                    .state(aws_sdk_ec2::types::RouteState::Active)
-                    .build(),
-            )
-            .associations(
-                aws_sdk_ec2::types::RouteTableAssociation::builder()
-                    .subnet_id("subnet-1")
-                    .build(),
-            )
-            .build()];
+        let route_tables = vec![
+            aws_sdk_ec2::types::RouteTable::builder()
+                .route_table_id("rtb-1")
+                .tags(ec2_test_tag("Name", "main-rt"))
+                .routes(
+                    aws_sdk_ec2::types::Route::builder()
+                        .destination_cidr_block("0.0.0.0/0")
+                        .gateway_id("igw-1")
+                        .state(aws_sdk_ec2::types::RouteState::Active)
+                        .build(),
+                )
+                .associations(
+                    aws_sdk_ec2::types::RouteTableAssociation::builder()
+                        .subnet_id("subnet-1")
+                        .build(),
+                )
+                .build(),
+        ];
         let route_query = ec2_describe_route_tables_output(
             &route_tables,
             Some("RouteTables[*].[RouteTableId,Tags,Routes,Associations]"),
@@ -1763,14 +2164,16 @@ mod tests {
         let route_query_json: Value = serde_json::from_str(&route_query).expect("valid json");
         assert_eq!(route_query_json[0][0], "rtb-1");
 
-        let addresses = vec![aws_sdk_ec2::types::Address::builder()
-            .allocation_id("eipalloc-1")
-            .public_ip("52.0.0.10")
-            .association_id("eipassoc-1")
-            .instance_id("i-1")
-            .private_ip_address("10.0.1.11")
-            .tags(ec2_test_tag("Name", "edge-eip"))
-            .build()];
+        let addresses = vec![
+            aws_sdk_ec2::types::Address::builder()
+                .allocation_id("eipalloc-1")
+                .public_ip("52.0.0.10")
+                .association_id("eipassoc-1")
+                .instance_id("i-1")
+                .private_ip_address("10.0.1.11")
+                .tags(ec2_test_tag("Name", "edge-eip"))
+                .build(),
+        ];
         let addr_out = ec2_describe_addresses_output(&addresses).expect("address output");
         let addr_json: Value = serde_json::from_str(&addr_out).expect("valid json");
         assert_eq!(addr_json["Addresses"][0]["AllocationId"], "eipalloc-1");
@@ -1786,34 +2189,42 @@ mod tests {
                     .build(),
             )
             .build();
-        let sgs = vec![aws_sdk_ec2::types::SecurityGroup::builder()
-            .group_id("sg-1")
-            .group_name("web")
-            .description("web access")
-            .vpc_id("vpc-1")
-            .ip_permissions(perm.clone())
-            .ip_permissions_egress(perm)
-            .tags(ec2_test_tag("Name", "web-sg"))
-            .build()];
+        let sgs = vec![
+            aws_sdk_ec2::types::SecurityGroup::builder()
+                .group_id("sg-1")
+                .group_name("web")
+                .description("web access")
+                .vpc_id("vpc-1")
+                .ip_permissions(perm.clone())
+                .ip_permissions_egress(perm)
+                .tags(ec2_test_tag("Name", "web-sg"))
+                .build(),
+        ];
         let sg_out = ec2_describe_security_groups_output(&sgs).expect("sg output");
         let sg_json: Value = serde_json::from_str(&sg_out).expect("valid json");
         assert_eq!(sg_json["SecurityGroups"][0]["GroupId"], "sg-1");
-        assert_eq!(sg_json["SecurityGroups"][0]["IpPermissions"][0]["FromPort"], 443);
+        assert_eq!(
+            sg_json["SecurityGroups"][0]["IpPermissions"][0]["FromPort"],
+            443
+        );
     }
 
     #[test]
     fn ec2_images_output_adds_name_tag_when_missing() {
-        let images = vec![aws_sdk_ec2::types::Image::builder()
-            .image_id("ami-1")
-            .name("base-ami")
-            .build()];
+        let images = vec![
+            aws_sdk_ec2::types::Image::builder()
+                .image_id("ami-1")
+                .name("base-ami")
+                .build(),
+        ];
         let out = ec2_describe_images_output(&images).expect("images output");
         let json: Value = serde_json::from_str(&out).expect("valid json");
         assert_eq!(json["Images"][0]["ImageId"], "ami-1");
         let tags = json["Images"][0]["Tags"].as_array().expect("tags");
-        assert!(tags
-            .iter()
-            .any(|t| t["Key"] == "Name" && t["Value"] == "base-ami"));
+        assert!(
+            tags.iter()
+                .any(|t| t["Key"] == "Name" && t["Value"] == "base-ami")
+        );
     }
 
     #[test]
@@ -1836,12 +2247,17 @@ mod tests {
             "AES256"
         );
 
-        let images = vec![aws_sdk_ecr::types::ImageDetail::builder()
-            .image_digest("sha256:abc123")
-            .build()];
+        let images = vec![
+            aws_sdk_ecr::types::ImageDetail::builder()
+                .image_digest("sha256:abc123")
+                .build(),
+        ];
         let images_out = ecr_describe_images_output(&images).expect("images output");
         let images_json: Value = serde_json::from_str(&images_out).expect("valid json");
-        assert_eq!(images_json["imageDetails"][0]["imageDigest"], "sha256:abc123");
+        assert_eq!(
+            images_json["imageDetails"][0]["imageDigest"],
+            "sha256:abc123"
+        );
     }
 
     #[test]
@@ -1866,32 +2282,36 @@ mod tests {
         let lbs_json: Value = serde_json::from_str(&lbs_out).expect("valid json");
         assert_eq!(lbs_json["LoadBalancers"][0]["LoadBalancerName"], "lb-a");
 
-        let listeners = vec![aws_sdk_elasticloadbalancingv2::types::Listener::builder()
-            .port(443)
-            .protocol(aws_sdk_elasticloadbalancingv2::types::ProtocolEnum::Https)
-            .default_actions(
-                aws_sdk_elasticloadbalancingv2::types::Action::builder()
-                    .r#type(aws_sdk_elasticloadbalancingv2::types::ActionTypeEnum::Forward)
-                    .target_group_arn("arn:aws:elasticloadbalancing:...:targetgroup/tg-a/1")
-                    .build(),
-            )
-            .build()];
+        let listeners = vec![
+            aws_sdk_elasticloadbalancingv2::types::Listener::builder()
+                .port(443)
+                .protocol(aws_sdk_elasticloadbalancingv2::types::ProtocolEnum::Https)
+                .default_actions(
+                    aws_sdk_elasticloadbalancingv2::types::Action::builder()
+                        .r#type(aws_sdk_elasticloadbalancingv2::types::ActionTypeEnum::Forward)
+                        .target_group_arn("arn:aws:elasticloadbalancing:...:targetgroup/tg-a/1")
+                        .build(),
+                )
+                .build(),
+        ];
         let listeners_out = elbv2_describe_listeners_output(&listeners).expect("listeners output");
         let listeners_json: Value = serde_json::from_str(&listeners_out).expect("valid json");
         assert_eq!(listeners_json["Listeners"][0]["Port"], 443);
 
-        let target_groups = vec![aws_sdk_elasticloadbalancingv2::types::TargetGroup::builder()
-            .target_group_name("tg-a")
-            .target_group_arn("arn:aws:elasticloadbalancing:...:targetgroup/tg-a/1")
-            .protocol(aws_sdk_elasticloadbalancingv2::types::ProtocolEnum::Http)
-            .port(80)
-            .build()];
+        let target_groups = vec![
+            aws_sdk_elasticloadbalancingv2::types::TargetGroup::builder()
+                .target_group_name("tg-a")
+                .target_group_arn("arn:aws:elasticloadbalancing:...:targetgroup/tg-a/1")
+                .protocol(aws_sdk_elasticloadbalancingv2::types::ProtocolEnum::Http)
+                .port(80)
+                .build(),
+        ];
         let tgs_out = elbv2_describe_target_groups_output(&target_groups).expect("tgs output");
         let tgs_json: Value = serde_json::from_str(&tgs_out).expect("valid json");
         assert_eq!(tgs_json["TargetGroups"][0]["TargetGroupName"], "tg-a");
 
-        let health_descriptions =
-            vec![aws_sdk_elasticloadbalancingv2::types::TargetHealthDescription::builder()
+        let health_descriptions = vec![
+            aws_sdk_elasticloadbalancingv2::types::TargetHealthDescription::builder()
                 .target(
                     aws_sdk_elasticloadbalancingv2::types::TargetDescription::builder()
                         .id("i-1111")
@@ -1900,10 +2320,13 @@ mod tests {
                 )
                 .target_health(
                     aws_sdk_elasticloadbalancingv2::types::TargetHealth::builder()
-                        .state(aws_sdk_elasticloadbalancingv2::types::TargetHealthStateEnum::Healthy)
+                        .state(
+                            aws_sdk_elasticloadbalancingv2::types::TargetHealthStateEnum::Healthy,
+                        )
                         .build(),
                 )
-                .build()];
+                .build(),
+        ];
         let health_out =
             elbv2_describe_target_health_output(&health_descriptions).expect("health output");
         let health_json: Value = serde_json::from_str(&health_out).expect("valid json");
@@ -1928,10 +2351,14 @@ mod tests {
         let attached_out =
             iam_list_attached_role_policies_output(&attached).expect("attached policies output");
         let attached_json: Value = serde_json::from_str(&attached_out).expect("valid json");
-        assert_eq!(attached_json["AttachedPolicies"][0]["PolicyName"], "aa-policy");
+        assert_eq!(
+            attached_json["AttachedPolicies"][0]["PolicyName"],
+            "aa-policy"
+        );
 
-        let names_out = iam_list_role_policies_output(&["inline-z".to_string(), "inline-a".to_string()])
-            .expect("policy names output");
+        let names_out =
+            iam_list_role_policies_output(&["inline-z".to_string(), "inline-a".to_string()])
+                .expect("policy names output");
         let names_json: Value = serde_json::from_str(&names_out).expect("valid json");
         assert_eq!(names_json["PolicyNames"][0], "inline-a");
         assert_eq!(names_json["PolicyNames"][1], "inline-z");
@@ -1978,7 +2405,8 @@ mod tests {
 
     #[test]
     fn extract_json_value_returns_expected_string() {
-        let payload = r#"{"RoleName": "demo-role", "Arn": "arn:aws:iam::123456789012:role/demo-role"}"#;
+        let payload =
+            r#"{"RoleName": "demo-role", "Arn": "arn:aws:iam::123456789012:role/demo-role"}"#;
         assert_eq!(
             extract_json_value(payload, "RoleName"),
             Some("demo-role".to_string())
@@ -1987,7 +2415,14 @@ mod tests {
 
     #[test]
     fn arg_value_extracts_flag_value_pairs() {
-        let args = ["ec2", "describe-vpcs", "--vpc-ids", "vpc-1234", "--output", "json"];
+        let args = [
+            "ec2",
+            "describe-vpcs",
+            "--vpc-ids",
+            "vpc-1234",
+            "--output",
+            "json",
+        ];
         assert_eq!(arg_value(&args, "--vpc-ids"), Some("vpc-1234"));
         assert_eq!(arg_value(&args, "--query"), None);
     }
@@ -2048,10 +2483,12 @@ mod tests {
 
     #[test]
     fn parse_tags_helpers_map_key_value_pairs() {
-        let ec2_tags = vec![aws_sdk_ec2::types::Tag::builder()
-            .key("Name")
-            .value("web")
-            .build()];
+        let ec2_tags = vec![
+            aws_sdk_ec2::types::Tag::builder()
+                .key("Name")
+                .value("web")
+                .build(),
+        ];
         let iam_tags = vec![
             aws_sdk_iam::types::Tag::builder()
                 .key("Env")
@@ -2157,5 +2594,4 @@ mod tests {
         assert!(out.contains("\"ok\":true"));
         assert!(out.contains("\"count\":2"));
     }
-
 }

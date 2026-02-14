@@ -7,8 +7,8 @@ type VpcInfoTuple = (String, String, String, Vec<(String, String)>);
 
 #[cfg(not(test))]
 mod aws_adapter {
-    use crate::aws_cli;
     use super::VpcInfoTuple;
+    use crate::aws_cli;
 
     pub fn set_region(region: &str) {
         aws_cli::set_region(region);
@@ -97,8 +97,8 @@ mod aws_adapter {
 
 #[cfg(test)]
 mod aws_adapter {
-    use crate::aws_cli;
     use super::VpcInfoTuple;
+    use crate::aws_cli;
 
     fn resource(id: &str, name: &str) -> aws_cli::AwsResource {
         aws_cli::AwsResource {
@@ -397,6 +397,39 @@ pub fn process_loading(app: &mut App) {
                 app.preview_content = new_detail.to_markdown(app.settings.language);
                 app.preview_filename = format!("{}.md", new_detail.name);
                 app.sg_detail = Some(new_detail);
+            } else if app.lb_detail.is_some() {
+                if let Some(new_detail) = aws_adapter::get_load_balancer_detail(
+                    app.load_balancers
+                        .get(app.selected_index)
+                        .map(|lb| lb.id.as_str())
+                        .unwrap_or(""),
+                ) {
+                    app.preview_content = new_detail.to_markdown(app.settings.language);
+                    app.preview_filename = format!("{}.md", new_detail.name);
+                    app.lb_detail = Some(new_detail);
+                }
+            } else if app.ecr_detail.is_some() {
+                if let Some(new_detail) = aws_adapter::get_ecr_detail(
+                    app.ecr_repositories
+                        .get(app.selected_index)
+                        .map(|repo| repo.id.as_str())
+                        .unwrap_or(""),
+                ) {
+                    app.preview_content = new_detail.to_markdown(app.settings.language);
+                    app.preview_filename = format!("{}.md", new_detail.name);
+                    app.ecr_detail = Some(new_detail);
+                }
+            } else if app.asg_detail.is_some()
+                && let Some(new_detail) = aws_adapter::get_asg_detail(
+                    app.auto_scaling_groups
+                        .get(app.selected_index)
+                        .map(|asg| asg.id.as_str())
+                        .unwrap_or(""),
+                )
+            {
+                app.preview_content = new_detail.to_markdown(app.settings.language);
+                app.preview_filename = format!("{}.md", new_detail.name);
+                app.asg_detail = Some(new_detail);
             }
             app.message = app.i18n.refresh_complete().to_string();
             finish_loading(app);
@@ -502,7 +535,7 @@ pub fn process_loading(app: &mut App) {
         }
         LoadingTask::LoadAsgDetail(name) => {
             if let Some(detail) = aws_adapter::get_asg_detail(&name) {
-                app.preview_content = detail.to_markdown();
+                app.preview_content = detail.to_markdown(app.settings.language);
                 app.preview_filename = format!("{}.md", detail.name);
                 app.asg_detail = Some(detail);
                 app.screen = Screen::Preview;
@@ -583,35 +616,64 @@ fn process_blueprint_resources(app: &mut App, current_index: usize) {
     let markdown = match resource.resource_type {
         ResourceType::Ec2 => aws_adapter::get_instance_detail(&resource.resource_id)
             .map(|d| d.to_markdown(app.settings.language))
-            .unwrap_or_else(|| format!("## EC2: {} ({})\n", resource.resource_name, failed)),
+            .unwrap_or_else(|| {
+                format!(
+                    "## {}: {} ({})\n",
+                    app.i18n.ec2(),
+                    resource.resource_name,
+                    failed
+                )
+            }),
         ResourceType::Network => aws_adapter::get_network_detail(&resource.resource_id)
-            .map(|d| d.to_markdown(app.settings.language))
-            .unwrap_or_else(|| format!("## Network: {} ({})\n", resource.resource_name, failed)),
-        ResourceType::SecurityGroup => aws_adapter::get_security_group_detail(&resource.resource_id)
             .map(|d| d.to_markdown(app.settings.language))
             .unwrap_or_else(|| {
                 format!(
-                    "## Security Group: {} ({})\n",
-                    resource.resource_name, failed
+                    "## {}: {} ({})\n",
+                    app.i18n.network(),
+                    resource.resource_name,
+                    failed
                 )
             }),
+        ResourceType::SecurityGroup => {
+            aws_adapter::get_security_group_detail(&resource.resource_id)
+                .map(|d| d.to_markdown(app.settings.language))
+                .unwrap_or_else(|| {
+                    format!(
+                        "## {}: {} ({})\n",
+                        app.i18n.security_group(),
+                        resource.resource_name,
+                        failed
+                    )
+                })
+        }
         ResourceType::LoadBalancer => aws_adapter::get_load_balancer_detail(&resource.resource_id)
             .map(|d| d.to_markdown(app.settings.language))
             .unwrap_or_else(|| {
                 format!(
-                    "## Load Balancer: {} ({})\n",
-                    resource.resource_name, failed
+                    "## {}: {} ({})\n",
+                    app.i18n.load_balancer(),
+                    resource.resource_name,
+                    failed
                 )
             }),
         ResourceType::Ecr => aws_adapter::get_ecr_detail(&resource.resource_id)
             .map(|d| d.to_markdown(app.settings.language))
-            .unwrap_or_else(|| format!("## ECR: {} ({})\n", resource.resource_name, failed)),
-        ResourceType::Asg => aws_adapter::get_asg_detail(&resource.resource_id)
-            .map(|d| d.to_markdown())
             .unwrap_or_else(|| {
                 format!(
-                    "## Auto Scaling Group: {} ({})\n",
-                    resource.resource_name, failed
+                    "## {}: {} ({})\n",
+                    app.i18n.md_ecr_repository(),
+                    resource.resource_name,
+                    failed
+                )
+            }),
+        ResourceType::Asg => aws_adapter::get_asg_detail(&resource.resource_id)
+            .map(|d| d.to_markdown(app.settings.language))
+            .unwrap_or_else(|| {
+                format!(
+                    "## {}: {} ({})\n",
+                    app.i18n.auto_scaling_group(),
+                    resource.resource_name,
+                    failed
                 )
             }),
     };
@@ -623,10 +685,28 @@ fn process_blueprint_resources(app: &mut App, current_index: usize) {
 }
 
 fn process_vpc_detail_step(app: &mut App, vpc_id: &str, step: u8) {
+    if step > 0 && app.network_detail.is_none() {
+        tracing::warn!(
+            vpc_id,
+            step,
+            "Network detail aborting because VPC info is missing"
+        );
+        app.message = app.i18n.network_detail_unavailable(vpc_id);
+        finish_loading(app);
+        return;
+    }
+
     match step {
         0 => {
             // Step 0: VPC 기본 정보
             if let Some(info) = aws_adapter::get_vpc_info(vpc_id) {
+                tracing::info!(
+                    vpc_id,
+                    cidr = %info.1,
+                    state = %info.2,
+                    tag_count = info.3.len(),
+                    "Network detail step 0 loaded VPC info"
+                );
                 app.network_detail = Some(NetworkDetail {
                     name: info.0,
                     id: vpc_id.to_string(),
@@ -642,54 +722,121 @@ fn process_vpc_detail_step(app: &mut App, vpc_id: &str, step: u8) {
                     dns_hostnames: false,
                 });
                 app.loading_progress.vpc_info = true;
+            } else {
+                tracing::warn!(vpc_id, "Network detail step 0 failed to load VPC info");
+                app.message = app.i18n.network_detail_unavailable(vpc_id);
+                app.network_detail = None;
+                finish_loading(app);
+                return;
             }
             app.loading_task = LoadingTask::LoadVpcDetail(vpc_id.to_string(), 1);
         }
         1 => {
             // Step 1: Subnets
+            let subnets = aws_adapter::list_subnets(vpc_id);
+            tracing::info!(
+                vpc_id,
+                subnet_count = subnets.len(),
+                "Network detail step 1 loaded subnets"
+            );
+            if subnets.is_empty() {
+                tracing::warn!(vpc_id, "Network detail step 1 returned empty subnet list");
+            }
             if let Some(ref mut detail) = app.network_detail {
-                detail.subnets = aws_adapter::list_subnets(vpc_id);
+                detail.subnets = subnets;
             }
             app.loading_progress.subnets = true;
             app.loading_task = LoadingTask::LoadVpcDetail(vpc_id.to_string(), 2);
         }
         2 => {
             // Step 2: Internet Gateways
+            let igws = aws_adapter::list_internet_gateways(vpc_id);
+            tracing::info!(
+                vpc_id,
+                igw_count = igws.len(),
+                "Network detail step 2 loaded internet gateways"
+            );
+            if igws.is_empty() {
+                tracing::warn!(
+                    vpc_id,
+                    "Network detail step 2 returned empty internet gateway list"
+                );
+            }
             if let Some(ref mut detail) = app.network_detail {
-                detail.igws = aws_adapter::list_internet_gateways(vpc_id);
+                detail.igws = igws;
             }
             app.loading_progress.igws = true;
             app.loading_task = LoadingTask::LoadVpcDetail(vpc_id.to_string(), 3);
         }
         3 => {
             // Step 3: NAT Gateways
+            let nats = aws_adapter::list_nat_gateways(vpc_id);
+            tracing::info!(
+                vpc_id,
+                nat_count = nats.len(),
+                "Network detail step 3 loaded NAT gateways"
+            );
+            if nats.is_empty() {
+                tracing::warn!(
+                    vpc_id,
+                    "Network detail step 3 returned empty NAT gateway list"
+                );
+            }
             if let Some(ref mut detail) = app.network_detail {
-                detail.nats = aws_adapter::list_nat_gateways(vpc_id);
+                detail.nats = nats;
             }
             app.loading_progress.nats = true;
             app.loading_task = LoadingTask::LoadVpcDetail(vpc_id.to_string(), 4);
         }
         4 => {
             // Step 4: Route Tables
+            let route_tables = aws_adapter::list_route_tables(vpc_id);
+            tracing::info!(
+                vpc_id,
+                route_table_count = route_tables.len(),
+                "Network detail step 4 loaded route tables"
+            );
+            if route_tables.is_empty() {
+                tracing::warn!(
+                    vpc_id,
+                    "Network detail step 4 returned empty route table list"
+                );
+            }
             if let Some(ref mut detail) = app.network_detail {
-                detail.route_tables = aws_adapter::list_route_tables(vpc_id);
+                detail.route_tables = route_tables;
             }
             app.loading_progress.route_tables = true;
             app.loading_task = LoadingTask::LoadVpcDetail(vpc_id.to_string(), 5);
         }
         5 => {
             // Step 5: Elastic IPs
+            let eips = aws_adapter::list_eips();
+            tracing::info!(
+                vpc_id,
+                eip_count = eips.len(),
+                "Network detail step 5 loaded EIPs"
+            );
+            if eips.is_empty() {
+                tracing::warn!(vpc_id, "Network detail step 5 returned empty EIP list");
+            }
             if let Some(ref mut detail) = app.network_detail {
-                detail.eips = aws_adapter::list_eips();
+                detail.eips = eips;
             }
             app.loading_progress.eips = true;
             app.loading_task = LoadingTask::LoadVpcDetail(vpc_id.to_string(), 6);
         }
         6 => {
             // Step 6: DNS Attributes
+            tracing::debug!(vpc_id, "Network detail step 6 loading DNS attributes");
             if let Some(ref mut detail) = app.network_detail {
                 detail.dns_support = aws_adapter::get_vpc_dns_support(vpc_id);
                 detail.dns_hostnames = aws_adapter::get_vpc_dns_hostnames(vpc_id);
+                tracing::info!(
+                    vpc_id,
+                    dns_support = detail.dns_support,
+                    dns_hostnames = detail.dns_hostnames,
+                    "Network detail step 6 loaded DNS attributes"
+                );
             }
             app.loading_progress.dns_attrs = true;
             app.loading_task = LoadingTask::LoadVpcDetail(vpc_id.to_string(), 7);
@@ -721,7 +868,22 @@ fn start_loading(app: &mut App, task: LoadingTask) {
 
 fn handle_login(app: &mut App, key: KeyEvent) {
     match key.code {
-        KeyCode::Enter => app.check_login(),
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.selected_profile_index > 0 {
+                app.selected_profile_index -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.selected_profile_index + 1 < app.available_profiles.len() {
+                app.selected_profile_index += 1;
+            }
+        }
+        KeyCode::Enter => {
+            app.select_current_profile_and_login();
+        }
+        KeyCode::Char('r') => {
+            app.refresh_profiles();
+        }
         KeyCode::Char('q') => app.running = false,
         _ => {}
     }
@@ -1443,26 +1605,38 @@ mod tests {
         app.screen = Screen::Ec2Select;
         app.instances = vec![sample_resource("i-1111", "web-1")];
         handle_key(&mut app, key(KeyCode::Enter));
-        assert_eq!(app.loading_task, LoadingTask::LoadEc2Detail("i-1111".to_string()));
+        assert_eq!(
+            app.loading_task,
+            LoadingTask::LoadEc2Detail("i-1111".to_string())
+        );
 
         app.screen = Screen::EcrSelect;
         app.loading = false;
         app.ecr_repositories = vec![sample_resource("repo-a", "repo-a")];
         handle_key(&mut app, key(KeyCode::Enter));
-        assert_eq!(app.loading_task, LoadingTask::LoadEcrDetail("repo-a".to_string()));
+        assert_eq!(
+            app.loading_task,
+            LoadingTask::LoadEcrDetail("repo-a".to_string())
+        );
 
         app.screen = Screen::AsgSelect;
         app.loading = false;
         app.auto_scaling_groups = vec![sample_resource("asg-a", "asg-a")];
         handle_key(&mut app, key(KeyCode::Enter));
-        assert_eq!(app.loading_task, LoadingTask::LoadAsgDetail("asg-a".to_string()));
+        assert_eq!(
+            app.loading_task,
+            LoadingTask::LoadAsgDetail("asg-a".to_string())
+        );
     }
 
     #[test]
     fn preview_keys_update_scroll_and_escape_route() {
         let mut app = App::new();
         app.screen = Screen::Preview;
-        app.preview_content = (0..100).map(|n| format!("line {}", n)).collect::<Vec<_>>().join("\n");
+        app.preview_content = (0..100)
+            .map(|n| format!("line {}", n))
+            .collect::<Vec<_>>()
+            .join("\n");
 
         handle_key(&mut app, key(KeyCode::Down));
         assert_eq!(app.preview_scroll, 1);
@@ -1480,7 +1654,10 @@ mod tests {
     fn preview_mouse_scroll_and_drag_work() {
         let mut app = App::new();
         app.screen = Screen::Preview;
-        app.preview_content = (0..30).map(|n| format!("line {}", n)).collect::<Vec<_>>().join("\n");
+        app.preview_content = (0..30)
+            .map(|n| format!("line {}", n))
+            .collect::<Vec<_>>()
+            .join("\n");
 
         handle_mouse(
             &mut app,
@@ -1573,10 +1750,7 @@ mod tests {
         });
         app.blueprint_resource_index = 1;
 
-        handle_key(
-            &mut app,
-            key_with_mod(KeyCode::Up, KeyModifiers::SHIFT),
-        );
+        handle_key(&mut app, key_with_mod(KeyCode::Up, KeyModifiers::SHIFT));
         assert_eq!(app.blueprint_resource_index, 0);
     }
 
@@ -1956,8 +2130,14 @@ mod tests {
             .map(|bp| bp.resources.clone())
             .unwrap_or_default();
         assert_eq!(resources.len(), 6);
-        assert_eq!(resources[0].resource_type, crate::blueprint::ResourceType::Ec2);
-        assert_eq!(resources[1].resource_type, crate::blueprint::ResourceType::Network);
+        assert_eq!(
+            resources[0].resource_type,
+            crate::blueprint::ResourceType::Ec2
+        );
+        assert_eq!(
+            resources[1].resource_type,
+            crate::blueprint::ResourceType::Network
+        );
         assert_eq!(
             resources[2].resource_type,
             crate::blueprint::ResourceType::SecurityGroup
@@ -1966,8 +2146,14 @@ mod tests {
             resources[3].resource_type,
             crate::blueprint::ResourceType::LoadBalancer
         );
-        assert_eq!(resources[4].resource_type, crate::blueprint::ResourceType::Ecr);
-        assert_eq!(resources[5].resource_type, crate::blueprint::ResourceType::Asg);
+        assert_eq!(
+            resources[4].resource_type,
+            crate::blueprint::ResourceType::Ecr
+        );
+        assert_eq!(
+            resources[5].resource_type,
+            crate::blueprint::ResourceType::Asg
+        );
     }
 
     #[test]
@@ -2089,57 +2275,20 @@ mod tests {
     }
 
     #[test]
-    fn process_loading_vpc_detail_steps_progress_without_network_calls_when_detail_absent() {
+    fn process_loading_vpc_detail_steps_require_step_zero_init() {
         let mut app = App::new();
         app.loading = true;
         app.loading_task = LoadingTask::LoadVpcDetail("vpc-1".to_string(), 1);
 
         process_loading(&mut app);
-        assert!(app.loading_progress.subnets);
-        assert_eq!(
-            app.loading_task,
-            LoadingTask::LoadVpcDetail("vpc-1".to_string(), 2)
-        );
-
-        process_loading(&mut app);
-        assert!(app.loading_progress.igws);
-        assert_eq!(
-            app.loading_task,
-            LoadingTask::LoadVpcDetail("vpc-1".to_string(), 3)
-        );
-
-        process_loading(&mut app);
-        assert!(app.loading_progress.nats);
-        assert_eq!(
-            app.loading_task,
-            LoadingTask::LoadVpcDetail("vpc-1".to_string(), 4)
-        );
-
-        process_loading(&mut app);
-        assert!(app.loading_progress.route_tables);
-        assert_eq!(
-            app.loading_task,
-            LoadingTask::LoadVpcDetail("vpc-1".to_string(), 5)
-        );
-
-        process_loading(&mut app);
-        assert!(app.loading_progress.eips);
-        assert_eq!(
-            app.loading_task,
-            LoadingTask::LoadVpcDetail("vpc-1".to_string(), 6)
-        );
-
-        process_loading(&mut app);
-        assert!(app.loading_progress.dns_attrs);
-        assert_eq!(
-            app.loading_task,
-            LoadingTask::LoadVpcDetail("vpc-1".to_string(), 7)
-        );
-
-        process_loading(&mut app);
-        assert_eq!(app.screen, Screen::Preview);
         assert!(!app.loading);
-        assert_eq!(app.loading_task, LoadingTask::None);
+        assert_eq!(app.network_detail, None);
+        assert_eq!(
+            app.loading_task,
+            LoadingTask::None,
+            "step 1 should not proceed without step 0 initialization"
+        );
+        assert_eq!(app.message, app.i18n.network_detail_unavailable("vpc-1"));
     }
 
     #[test]

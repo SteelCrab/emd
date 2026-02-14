@@ -12,7 +12,10 @@ mod security_group;
 mod vpc;
 
 // Re-export common types
-pub use common::{AwsResource, check_aws_login, set_region};
+pub use common::{
+    AwsAuthError, AwsAuthErrorCode, AwsResource, check_aws_login, list_aws_profiles,
+    set_aws_profile, set_region,
+};
 
 // Re-export EC2 types and functions
 #[allow(unused_imports)]

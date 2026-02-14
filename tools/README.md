@@ -2,16 +2,18 @@
 
 [Korean guide](README_KR.md)
 
-This folder groups quality/coverage helper assets.
+Quality scripts for local quality gate.
+
+Coverage threshold is **85%** (`MIN_LINES=85`).
+Coverage output is `target/llvm-cov-target/lcov.info` (used by CI/codecov).
 
 ## Files
 - `rust-lint-cleanup.sh`: clippy-based lint cleanup script (`--fix`, regular check, dead-code check).
 - `rust-coverage.sh`: scenario gate + `cargo llvm-cov` line coverage gate.
-- `check-scenarios.sh`: validates scenario catalog counts and test refs.
 - `test-scenarios.csv`: scenario catalog used by the gate.
 
 ## Usage
-From repository root:
+From repo root, run in this order:
 
 ```bash
 ./tools/rust-lint-cleanup.sh

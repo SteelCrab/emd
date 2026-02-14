@@ -19,12 +19,6 @@ fn is_login_required_error(error: &AwsAuthError) -> bool {
     )
 }
 
-fn is_login_required_message(message: &str, i18n: &I18n) -> bool {
-    message == i18n.auth_provider_missing()
-        || message == i18n.auth_credentials_load_failed()
-        || message == i18n.auth_caller_identity_failed()
-}
-
 fn is_aws_credential_message(message: &str, i18n: &I18n) -> bool {
     message == i18n.auth_network_error() || message == i18n.auth_unknown_error()
 }
@@ -197,7 +191,7 @@ pub struct App {
     pub loading_progress: LoadingProgress,
     pub last_login_check: Option<Instant>,
     pub login_info: Option<String>,
-    pub login_error: Option<String>,
+    pub login_error: Option<AwsAuthError>,
     pub available_profiles: Vec<String>,
     pub selected_profile_index: usize,
     pub selected_region: usize,
@@ -315,11 +309,14 @@ impl App {
 
                 if self.available_profiles.is_empty() {
                     self.login_info = None;
-                    self.login_error = Some(format!(
-                        "{} {}",
-                        self.i18n.profile_not_found(),
-                        self.i18n.profile_refresh_hint()
-                    ));
+                    self.login_error = Some(AwsAuthError {
+                        code: AwsAuthErrorCode::Unknown,
+                        detail: format!(
+                            "{} {}",
+                            self.i18n.profile_not_found(),
+                            self.i18n.profile_refresh_hint()
+                        ),
+                    });
                     return;
                 }
 
@@ -349,8 +346,8 @@ impl App {
 
                 if !self
                     .login_error
-                    .as_deref()
-                    .is_some_and(|message| is_login_required_message(message, &self.i18n))
+                    .as_ref()
+                    .is_some_and(is_login_required_error)
                 {
                     self.login_error = None;
                 }
@@ -359,7 +356,10 @@ impl App {
                 self.available_profiles.clear();
                 self.selected_profile_index = 0;
                 self.login_info = None;
-                self.login_error = Some(err);
+                self.login_error = Some(AwsAuthError {
+                    code: AwsAuthErrorCode::Unknown,
+                    detail: err,
+                });
             }
         }
     }
@@ -407,11 +407,17 @@ impl App {
                 if is_login_required_error(&e) {
                     self.login_info = None;
                     self.screen = Screen::Login;
-                    self.login_error = Some(auth_error_message(&e, &self.i18n));
+                    self.login_error = Some(AwsAuthError {
+                        code: e.code,
+                        detail: e.detail.clone(),
+                    });
                     tracing::warn!("Login required; screen moved to Login");
                 } else {
                     self.login_info = None;
-                    self.login_error = None;
+                    self.login_error = Some(AwsAuthError {
+                        code: e.code,
+                        detail: e.detail.clone(),
+                    });
                     self.screen = Screen::BlueprintSelect;
                     self.message = auth_error_message(&e, &self.i18n);
                     tracing::warn!("Login check degraded (non-auth error); keeping app accessible");
@@ -447,7 +453,10 @@ impl App {
                 tracing::warn!(code = ?e.code, detail = %e.detail, "Session login check failed");
                 if is_login_required_error(&e) {
                     self.login_info = None;
-                    self.login_error = Some(auth_error_message(&e, &self.i18n));
+                    self.login_error = Some(AwsAuthError {
+                        code: e.code,
+                        detail: e.detail.clone(),
+                    });
                     self.screen = Screen::Login;
                     self.refresh_profiles();
                     tracing::warn!(
@@ -1003,7 +1012,8 @@ mod tests {
         assert!(app.available_profiles.is_empty());
         assert!(
             app.login_error
-                .as_deref()
+                .as_ref()
+                .map(|error| error.detail.as_str())
                 .unwrap_or_default()
                 .contains(app.i18n.profile_not_found())
         );

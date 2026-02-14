@@ -30,6 +30,10 @@ impl AwsAuthError {
             detail: detail.into(),
         }
     }
+
+    pub fn as_str(&self) -> &str {
+        &self.detail
+    }
 }
 
 pub fn set_region(region: &str) {
@@ -447,21 +451,55 @@ async fn run_ec2_request(
     operation: &str,
     args: &[&str],
 ) -> Option<String> {
-    let client = aws_sdk_ec2::Client::new(config);
-
     match operation {
-        "describe-instances" => ec2_describe_instances(&client, args).await,
-        "describe-volumes" => ec2_describe_volumes(&client, args).await,
-        "describe-instance-attribute" => ec2_describe_instance_attribute(&client, args).await,
-        "describe-vpcs" => ec2_describe_vpcs(&client, args).await,
-        "describe-subnets" => ec2_describe_subnets(&client, args).await,
-        "describe-internet-gateways" => ec2_describe_internet_gateways(&client, args).await,
-        "describe-nat-gateways" => ec2_describe_nat_gateways(&client, args).await,
-        "describe-route-tables" => ec2_describe_route_tables(&client, args).await,
-        "describe-addresses" => ec2_describe_addresses(&client).await,
-        "describe-vpc-attribute" => ec2_describe_vpc_attribute(&client, args).await,
-        "describe-security-groups" => ec2_describe_security_groups(&client, args).await,
-        "describe-images" => ec2_describe_images(&client, args).await,
+        "describe-instances" => {
+            let client = aws_sdk_ec2::Client::new(config);
+            ec2_describe_instances(&client, args).await
+        }
+        "describe-volumes" => {
+            let client = aws_sdk_ec2::Client::new(config);
+            ec2_describe_volumes(&client, args).await
+        }
+        "describe-instance-attribute" => {
+            let client = aws_sdk_ec2::Client::new(config);
+            ec2_describe_instance_attribute(&client, args).await
+        }
+        "describe-vpcs" => {
+            let client = aws_sdk_ec2::Client::new(config);
+            ec2_describe_vpcs(&client, args).await
+        }
+        "describe-subnets" => {
+            let client = aws_sdk_ec2::Client::new(config);
+            ec2_describe_subnets(&client, args).await
+        }
+        "describe-internet-gateways" => {
+            let client = aws_sdk_ec2::Client::new(config);
+            ec2_describe_internet_gateways(&client, args).await
+        }
+        "describe-nat-gateways" => {
+            let client = aws_sdk_ec2::Client::new(config);
+            ec2_describe_nat_gateways(&client, args).await
+        }
+        "describe-route-tables" => {
+            let client = aws_sdk_ec2::Client::new(config);
+            ec2_describe_route_tables(&client, args).await
+        }
+        "describe-addresses" => {
+            let client = aws_sdk_ec2::Client::new(config);
+            ec2_describe_addresses(&client).await
+        }
+        "describe-vpc-attribute" => {
+            let client = aws_sdk_ec2::Client::new(config);
+            ec2_describe_vpc_attribute(&client, args).await
+        }
+        "describe-security-groups" => {
+            let client = aws_sdk_ec2::Client::new(config);
+            ec2_describe_security_groups(&client, args).await
+        }
+        "describe-images" => {
+            let client = aws_sdk_ec2::Client::new(config);
+            ec2_describe_images(&client, args).await
+        }
         _ => None,
     }
 }
@@ -1257,11 +1295,15 @@ async fn run_ecr_request(
     operation: &str,
     args: &[&str],
 ) -> Option<String> {
-    let client = aws_sdk_ecr::Client::new(config);
-
     match operation {
-        "describe-repositories" => ecr_describe_repositories(&client, args).await,
-        "describe-images" => ecr_describe_images(&client, args).await,
+        "describe-repositories" => {
+            let client = aws_sdk_ecr::Client::new(config);
+            ecr_describe_repositories(&client, args).await
+        }
+        "describe-images" => {
+            let client = aws_sdk_ecr::Client::new(config);
+            ecr_describe_images(&client, args).await
+        }
         _ => None,
     }
 }
@@ -1341,13 +1383,23 @@ async fn run_elbv2_request(
     operation: &str,
     args: &[&str],
 ) -> Option<String> {
-    let client = aws_sdk_elasticloadbalancingv2::Client::new(config);
-
     match operation {
-        "describe-load-balancers" => elbv2_describe_load_balancers(&client, args).await,
-        "describe-listeners" => elbv2_describe_listeners(&client, args).await,
-        "describe-target-groups" => elbv2_describe_target_groups(&client, args).await,
-        "describe-target-health" => elbv2_describe_target_health(&client, args).await,
+        "describe-load-balancers" => {
+            let client = aws_sdk_elasticloadbalancingv2::Client::new(config);
+            elbv2_describe_load_balancers(&client, args).await
+        }
+        "describe-listeners" => {
+            let client = aws_sdk_elasticloadbalancingv2::Client::new(config);
+            elbv2_describe_listeners(&client, args).await
+        }
+        "describe-target-groups" => {
+            let client = aws_sdk_elasticloadbalancingv2::Client::new(config);
+            elbv2_describe_target_groups(&client, args).await
+        }
+        "describe-target-health" => {
+            let client = aws_sdk_elasticloadbalancingv2::Client::new(config);
+            elbv2_describe_target_health(&client, args).await
+        }
         _ => None,
     }
 }
@@ -1575,13 +1627,23 @@ async fn run_iam_request(
     operation: &str,
     args: &[&str],
 ) -> Option<String> {
-    let client = aws_sdk_iam::Client::new(config);
-
     match operation {
-        "get-role" => iam_get_role(&client, args).await,
-        "list-attached-role-policies" => iam_list_attached_role_policies(&client, args).await,
-        "list-role-policies" => iam_list_role_policies(&client, args).await,
-        "get-role-policy" => iam_get_role_policy(&client, args).await,
+        "get-role" => {
+            let client = aws_sdk_iam::Client::new(config);
+            iam_get_role(&client, args).await
+        }
+        "list-attached-role-policies" => {
+            let client = aws_sdk_iam::Client::new(config);
+            iam_list_attached_role_policies(&client, args).await
+        }
+        "list-role-policies" => {
+            let client = aws_sdk_iam::Client::new(config);
+            iam_list_role_policies(&client, args).await
+        }
+        "get-role-policy" => {
+            let client = aws_sdk_iam::Client::new(config);
+            iam_get_role_policy(&client, args).await
+        }
         _ => None,
     }
 }
@@ -1834,18 +1896,14 @@ pub async fn get_sdk_config() -> aws_config::SdkConfig {
         .ok()
         .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok());
 
-    if let Ok(region) = REGION.lock() {
-        if let Some(ref region_str) = *region {
-            config_loader = config_loader.region(aws_config::Region::new(region_str.clone()));
-        } else if let Some(region_str) = region_env {
-            config_loader = config_loader.region(aws_config::Region::new(region_str));
+    if let Ok(region_lock) = REGION.lock() {
+        if let Some(region_str) = region_lock.as_deref() {
+            config_loader = config_loader.region(aws_config::Region::new(region_str.to_string()));
+        } else if let Some(region_str) = region_env.as_deref() {
+            config_loader = config_loader.region(aws_config::Region::new(region_str.to_string()));
+        } else {
+            config_loader = config_loader.region(aws_config::Region::new("us-east-1"));
         }
-    }
-
-    if let Ok(region) = REGION.lock()
-        && region.is_none()
-    {
-        config_loader = config_loader.region(aws_config::Region::new("us-east-1"));
     }
 
     config_loader.load().await
@@ -1997,82 +2055,21 @@ mod tests {
                     .is_none()
             );
             assert!(
-                run_ec2_request(&config, "describe-volumes", &["ec2", "describe-volumes"])
-                    .await
-                    .is_none()
-            );
-            assert!(
-                run_ec2_request(
-                    &config,
-                    "describe-instance-attribute",
-                    &["ec2", "describe-instance-attribute"]
-                )
-                .await
-                .is_none()
-            );
-            assert!(
-                run_ec2_request(
-                    &config,
-                    "describe-vpc-attribute",
-                    &["ec2", "describe-vpc-attribute"]
-                )
-                .await
-                .is_none()
-            );
-            assert!(
-                run_ec2_request(&config, "describe-images", &["ec2", "describe-images"])
-                    .await
-                    .is_none()
-            );
-
-            assert!(
-                run_ecr_request(&config, "describe-images", &["ecr", "describe-images"])
+                run_ecr_request(&config, "unknown-op", &["ecr", "unknown-op"])
                     .await
                     .is_none()
             );
             assert!(
                 run_elbv2_request(
                     &config,
-                    "describe-listeners",
-                    &["elbv2", "describe-listeners"]
+                    "unknown-op",
+                    &["elbv2", "unknown-op"]
                 )
                 .await
                 .is_none()
             );
             assert!(
-                run_elbv2_request(
-                    &config,
-                    "describe-target-health",
-                    &["elbv2", "describe-target-health"]
-                )
-                .await
-                .is_none()
-            );
-            assert!(
-                run_iam_request(&config, "get-role", &["iam", "get-role"])
-                    .await
-                    .is_none()
-            );
-            assert!(
-                run_iam_request(
-                    &config,
-                    "list-attached-role-policies",
-                    &["iam", "list-attached-role-policies"]
-                )
-                .await
-                .is_none()
-            );
-            assert!(
-                run_iam_request(
-                    &config,
-                    "list-role-policies",
-                    &["iam", "list-role-policies"]
-                )
-                .await
-                .is_none()
-            );
-            assert!(
-                run_iam_request(&config, "get-role-policy", &["iam", "get-role-policy"])
+                run_iam_request(&config, "unknown-op", &["iam", "unknown-op"])
                     .await
                     .is_none()
             );

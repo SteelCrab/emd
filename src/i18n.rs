@@ -1482,20 +1482,27 @@ impl I18n {
 mod tests {
     use super::{I18n, Language};
 
-    fn assert_all_labels_non_empty(i: &I18n) {
-        macro_rules! assert_non_empty {
-            ($($method:ident),+ $(,)?) => {
-                $(
-                    assert!(
-                        !i.$method().is_empty(),
-                        "{} should not be empty",
-                        stringify!($method)
-                    );
-                )+
-            };
-        }
+    macro_rules! assert_non_empty {
+        ($i:ident, $($method:ident),+ $(,)?) => {
+            $(
+                assert!(
+                    !$i.$method().is_empty(),
+                    "{} should not be empty",
+                    stringify!($method)
+                );
+            )+
+        };
+        ($value:expr) => {
+            assert!(
+                !$value.is_empty(),
+                "{} should not be empty",
+                stringify!($value)
+            );
+        };
+    }
 
-        assert_non_empty!(
+    fn assert_all_labels_non_empty(i: &I18n) {
+        assert_non_empty!(i,
             exit,
             settings,
             main_tab,
@@ -1561,7 +1568,44 @@ mod tests {
             no_asgs,
             auto_scaling_group,
             loading_blueprint_resources,
+            ec2,
+            network,
+            security_group,
+            load_balancer,
             vpc_basic_info,
+            aws_login_retry_hint,
+            profile_select_prompt,
+            profile_not_found,
+            profile_refresh_hint,
+            auth_provider_missing,
+            auth_credentials_load_failed,
+            auth_caller_identity_failed,
+            auth_network_error,
+            auth_unknown_error,
+            blueprint_save_failed,
+            md_uri,
+            ecr_encryption_kms,
+            ecr_encryption_aes256,
+            asg_launch_template,
+            asg_launch_configuration,
+            asg_min_size,
+            asg_max_size,
+            asg_desired_capacity,
+            asg_default_cooldown,
+            asg_health_check_type,
+            asg_health_check_grace_period,
+            asg_created_at,
+            asg_availability_zones,
+            asg_instances,
+            asg_instance_id,
+            asg_target_groups,
+            asg_scaling_policies,
+            asg_policy_type,
+            asg_adjustment_type,
+            asg_adjustment_value,
+            asg_cooldown,
+            asg_tags,
+            asg_key,
             subnets,
             internet_gateway,
             nat_gateway,
@@ -1679,5 +1723,12 @@ mod tests {
 
         assert!(ko.current_loading("작업").contains("작업"));
         assert!(en.current_loading("task").contains("task"));
+
+        assert_non_empty!(ko.asg_seconds(10));
+        assert_non_empty!(ko.asg_instances_with_count(3));
+        assert_non_empty!(ko.network_detail_unavailable("vpc-1234"));
+        assert_non_empty!(en.asg_seconds(10));
+        assert_non_empty!(en.asg_instances_with_count(3));
+        assert_non_empty!(en.network_detail_unavailable("vpc-1234"));
     }
 }

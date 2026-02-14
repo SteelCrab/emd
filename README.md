@@ -1,8 +1,11 @@
 # EMD
+[![coverage](https://codecov.io/gh/SteelCrab/emd/branch/main/graph/badge.svg)](https://codecov.io/gh/SteelCrab/emd)
 
 [🇺🇸 English](README.md) | [🇰🇷 한국어](README.ko.md)
 
 ![alt text](images/emd-1.png)
+
+**Global coverage gate:** `cargo llvm-cov` **>= 85%** (`tools/rust-coverage.sh`)
 
 `emd` is a Terminal User Interface (TUI) application designed to explore your AWS resources and generate comprehensive Markdown documentation.
 

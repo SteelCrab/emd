@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::app::{App, LoadingTask, REGIONS, SERVICE_KEYS, Screen};
+use crate::aws_cli::AwsAuthErrorCode;
 
 const EMD_LOGO: &str = r#"
   ______ __  __ _____  
@@ -379,10 +380,11 @@ fn draw_login(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Red),
         )));
         content.push(Line::from(""));
-        let display_error = if error.to_lowercase().contains("an error") {
-            i.aws_login_retry_hint()
-        } else {
-            error.as_str()
+        let display_error = match error.code {
+            AwsAuthErrorCode::CredentialsProviderMissing
+            | AwsAuthErrorCode::CredentialsLoadFailed
+            | AwsAuthErrorCode::CallerIdentityFailed => i.aws_login_retry_hint(),
+            AwsAuthErrorCode::Network | AwsAuthErrorCode::Unknown => error.as_str(),
         };
         content.push(Line::from(Span::styled(
             display_error,
@@ -1093,7 +1095,7 @@ fn draw_asg_select(frame: &mut Frame, app: &App, area: Rect) {
 mod tests {
     use super::draw;
     use crate::app::{App, LoadingTask, Screen};
-    use crate::aws_cli::AwsResource;
+    use crate::aws_cli::{AwsAuthError, AwsAuthErrorCode, AwsResource};
     use crate::blueprint::{Blueprint, BlueprintResource, ResourceType};
     use chrono::Utc;
     use ratatui::Terminal;
@@ -1193,15 +1195,19 @@ mod tests {
     fn draw_login_variants_without_panic() {
         let mut app = App::new();
         app.screen = Screen::Login;
-        app.login_error = Some("an error occurred while loading credentials".to_string());
+        app.login_error = Some(AwsAuthError {
+            code: AwsAuthErrorCode::CredentialsLoadFailed,
+            detail: "an error occurred while loading credentials".to_string(),
+        });
         render_app(&app);
 
         app.available_profiles = vec!["default".to_string(), "dev".to_string()];
         app.selected_profile_index = 1;
-        app.login_error = Some("ExpiredToken".to_string());
-        app.login_info = Some(
-            "161203794945 (arn:aws:iam::161203794945:user/pyh5523)".to_string(),
-        );
+        app.login_error = Some(AwsAuthError {
+            code: AwsAuthErrorCode::Unknown,
+            detail: "ExpiredToken".to_string(),
+        });
+        app.login_info = Some("161203794945 (arn:aws:iam::161203794945:user/pyh5523)".to_string());
         render_app(&app);
     }
 

@@ -12,6 +12,7 @@
 - Unified coverage pipeline by removing redundant scenario-check script and simplifying `tools` execution flow
 - Updated CI coverage artifact path to match `cargo llvm-cov` output (`target/llvm-cov-target/lcov.info`)
 - Added coverage threshold guidance and documentation updates in `tools/README.md` / `tools/README_KR.md`
+- Added roadmap references in README and introduced `ROADMAP.md` / `ROADMAP_KR.md` as process documentation
 
 ### 🐛 Fixes
 

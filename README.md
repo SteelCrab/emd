@@ -9,6 +9,11 @@
 
 `emd` is a Terminal User Interface (TUI) application designed to explore your AWS resources and generate comprehensive Markdown documentation.
 
+## Roadmap
+
+- [ROADMAP.md](ROADMAP.md)
+- [ROADMAP_KR.md](ROADMAP_KR.md)
+
 ## Features
 
 - **Resource Exploration**: Easily browse EC2 instances, VPCs (Networks), Security Groups, and Load Balancers.
